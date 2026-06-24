@@ -7,27 +7,23 @@
   "use strict";
 
   /* ---------- Config ---------- */
-  var ROTATE_MS   = 12000;   // dwell time per headline
-  var REFRESH_MS  = 5 * 60 * 1000; // how often we'd re-poll the backend
-  var API_URL     = null;    // e.g. "/api/news" — when set, fetchNews() uses it
+  var BUILD_ID    = "clean-weather-ready-001"; // internal version marker (not shown on screen)
+  var ROTATE_MS   = 12000;          // dwell time per headline
+  var REFRESH_MS  = 5 * 60 * 1000;  // how often we re-poll the backend
 
-  /* Build tag — bump this string whenever you ship, so you can confirm the
-     tablet actually loaded the newest code (shown bottom-right + in overlay). */
-  var BUILD_ID = "tablet-compact-layout-001";
+  /* Backend endpoints. The frontend NEVER fetches RSS directly — it calls these
+     Cloudflare Worker endpoints, which normalise RSS + weather into clean JSON.
+     API_BASE = "" means same-origin (the Worker/Pages serves this page too).
+     Point a local/preview build at the live API by setting API_BASE to the
+     Worker origin, e.g. "https://eire-daily.<you>.workers.dev". */
+  var API_BASE         = "";
+  var NEWS_ENDPOINT    = "/api/news";
+  var WEATHER_ENDPOINT = "/api/weather";
 
-  /* Temporary viewport debug overlay. Flip to false (or delete the block) once
-     the tablet sizing is sorted. */
-  var DEBUG_VIEWPORT = true;
-
-  /* Tablet sizing knob. The dashboard is designed at a fixed 1280x800 and
-     scaled to fit the screen. On the Lenovo tablet the plain fit can look a
-     touch "zoomed out" because of letterbox bars, so this multiplier pushes
-     the canvas to fill more of the visible area. Tune it by hand: try 1.05,
-     1.10, 1.15 (1.00 = exact letterbox fit, no zoom).
-     It is self-limiting: scaleToFit() never zooms past the point where the
-     empty outer padding has bled off the edges, so headlines, summary and
-     the side column are never clipped — even on a smaller screen. */
-  var TABLET_SCALE_MULTIPLIER = 1.12;
+  /* Stock Dublin image, used when an article has no image OR its image fails to
+     load. Bundled SVG always renders (offline-safe) so the kiosk never shows a
+     broken image; swap for any reachable Dublin photo URL if you prefer. */
+  var DUBLIN_STOCK_IMAGE = "assets/dublin.svg";
 
   /* ---------- Source styling map ---------- */
   var SOURCES = {
@@ -94,6 +90,19 @@
     }
   ];
 
+  /* ---------- Mock weather (preview / offline fallback) ---------- */
+  var MOCK_WEATHER = {
+    location: "Dublin",
+    temperature: 14,
+    condition: "Cloudy",
+    rainChance: 40,
+    precipitation: 0.4,
+    windSpeed: 18,
+    updatedAt: new Date(now).toISOString(),
+    today:    { max: 17, min: 10, rainChance: 50 },
+    tomorrow: { max: 16, min: 9,  rainChance: 35 }
+  };
+
   /* ---------- State ---------- */
   var items = [];
   var idx = 0;
@@ -114,7 +123,16 @@
   var upnext      = $("upnext");
   var sideCount   = $("sideCount");
   var updatedTime = $("updatedTime");
-  var rotationStatus = $("rotationStatus");
+  // Weather card
+  var weatherTemp    = $("weatherTemp");
+  var weatherCond    = $("weatherCond");
+  var weatherRain    = $("weatherRain");
+  var weatherPrecip  = $("weatherPrecip");
+  var weatherWind    = $("weatherWind");
+  var fcTodayTemp    = $("fcTodayTemp");
+  var fcTodayRain    = $("fcTodayRain");
+  var fcTomorrowTemp = $("fcTomorrowTemp");
+  var fcTomorrowRain = $("fcTomorrowRain");
 
   /* ---------- Helpers ---------- */
   function pad(n) { return n < 10 ? "0" + n : "" + n; }
@@ -142,29 +160,36 @@
     return DAYS[date.getDay()] + ", " + date.getDate() + " " + MONTHS[date.getMonth()];
   }
 
-  /* ---------- Image preloading with graceful fallback ---------- */
+  /* ---------- Hero image: article image -> Dublin stock -> source glyph ---------- */
   function applyMedia(item) {
     if (item.image) {
-      // probe the image; only show it if it actually loads
-      var probe = new Image();
-      probe.onload = function () {
-        if (items[idx] === item) {
-          heroImg.style.backgroundImage = "url('" + item.image + "')";
-          hero.className = hero.className.replace(/\s*no-image/, "");
-        }
-      };
-      probe.onerror = function () {
-        if (items[idx] === item) showFallback(item);
-      };
-      probe.src = item.image;
-      // optimistic: set immediately, fallback handler will swap if it fails
-      heroImg.style.backgroundImage = "url('" + item.image + "')";
-      hero.className = hero.className.replace(/\s*no-image/, "");
+      loadHeroImage(item, item.image, function () { useStockImage(item); });
     } else {
-      showFallback(item);
+      useStockImage(item);
     }
   }
-  function showFallback(item) {
+  function useStockImage(item) {
+    if (DUBLIN_STOCK_IMAGE) {
+      loadHeroImage(item, DUBLIN_STOCK_IMAGE, function () { showGlyph(item); });
+    } else {
+      showGlyph(item);
+    }
+  }
+  // Probe a URL off-screen; only paint it if it actually loads, else run onFail.
+  // The items[idx] guard prevents a slow image from overwriting a newer card.
+  function loadHeroImage(item, url, onFail) {
+    var probe = new Image();
+    probe.onload = function () {
+      if (items[idx] !== item) return;
+      heroImg.style.backgroundImage = "url('" + url + "')";
+      hero.className = hero.className.replace(/\s*no-image/, "");
+    };
+    probe.onerror = function () {
+      if (items[idx] === item) onFail();
+    };
+    probe.src = url;
+  }
+  function showGlyph(item) {
     heroImg.style.backgroundImage = "none";
     fallbackG.textContent = srcMeta(item.source).glyph;
     if (hero.className.indexOf("no-image") === -1) hero.className += " no-image";
@@ -269,33 +294,81 @@
   }
 
   /* ---------- Data loading ---------- */
+  // Frontend calls the backend only (never RSS directly). On any failure it
+  // falls back to mock data so the kiosk never appears broken.
+  function apiUrl(path) { return API_BASE ? (API_BASE + path) : path; }
+
   function fetchNews(cb) {
-    // When API_URL is set, swap mock data for a real fetch.
-    if (!API_URL || typeof fetch === "undefined") {
-      cb(null, MOCK_NEWS.slice());
-      return;
-    }
-    fetch(API_URL).then(function (r) { return r.json(); })
+    if (typeof fetch === "undefined") { cb(new Error("no fetch"), MOCK_NEWS.slice(), null); return; }
+    fetch(apiUrl(NEWS_ENDPOINT)).then(function (r) { return r.json(); })
       .then(function (data) {
         var list = (data && data.items) ? data.items : data;
-        cb(null, Array.isArray(list) && list.length ? list : MOCK_NEWS.slice());
+        if (Array.isArray(list) && list.length) {
+          cb(null, list, (data && data.updatedAt) || null);
+        } else {
+          cb(new Error("empty news"), MOCK_NEWS.slice(), null);
+        }
       })
-      .catch(function (e) { cb(e, MOCK_NEWS.slice()); });
+      .catch(function (e) { cb(e, MOCK_NEWS.slice(), null); });
+  }
+
+  function fetchWeather(cb) {
+    if (typeof fetch === "undefined") { cb(new Error("no fetch"), MOCK_WEATHER); return; }
+    fetch(apiUrl(WEATHER_ENDPOINT)).then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data && typeof data.temperature !== "undefined") cb(null, data);
+        else cb(new Error("bad weather"), MOCK_WEATHER);
+      })
+      .catch(function (e) { cb(e, MOCK_WEATHER); });
   }
 
   function loadAndRender(isInitial) {
-    fetchNews(function (err, data) {
+    fetchNews(function (err, data, updatedAt) {
       items = (data || []).filter(function (d) { return d && d.title; });
-      if (!items.length) {
-        rotationStatus.textContent = "No headlines available";
-        return;
-      }
-      // keep current index in range across refreshes
-      if (idx >= items.length) idx = 0;
-      rotationStatus.textContent = "Rotating " + items.length + " headlines";
-      updatedTime.textContent = fmtClock(new Date()) + (err ? " · cached" : "");
+      if (!items.length) return;            // mock fallback makes this near-impossible
+      if (idx >= items.length) idx = 0;     // keep index in range across refreshes
+      setUpdated(updatedAt, err);
       if (isInitial) startRotation(); else { renderSide(); }
     });
+  }
+
+  /* ---------- Weather ---------- */
+  function loadWeather() {
+    fetchWeather(function (err, w) {
+      renderWeather(w);
+      setUpdated(w && w.updatedAt, err);
+    });
+  }
+
+  function fmtTemp(t) {
+    return (typeof t === "number" && !isNaN(t)) ? Math.round(t) + "°" : "--°";
+  }
+  function pct(v)  { return (v === 0 || v) ? v + "%" : "--"; }
+  function setText(el, s) { if (el) el.textContent = s; }
+
+  function renderWeather(w) {
+    if (!w) return;
+    setText(weatherTemp,   fmtTemp(w.temperature));
+    setText(weatherCond,   w.condition || "—");
+    setText(weatherRain,   pct(w.rainChance));
+    setText(weatherPrecip, ((w.precipitation === 0 || w.precipitation) ? w.precipitation + " mm" : "--"));
+    setText(weatherWind,   ((w.windSpeed === 0 || w.windSpeed) ? w.windSpeed + " km/h" : "--"));
+    if (w.today) {
+      setText(fcTodayTemp, fmtTemp(w.today.max) + " / " + fmtTemp(w.today.min));
+      setText(fcTodayRain, pct(w.today.rainChance));
+    }
+    if (w.tomorrow) {
+      setText(fcTomorrowTemp, fmtTemp(w.tomorrow.max) + " / " + fmtTemp(w.tomorrow.min));
+      setText(fcTomorrowRain, pct(w.tomorrow.rainChance));
+    }
+  }
+
+  // Single small "Updated HH:MM" label, shared by news + weather refreshes.
+  function setUpdated(iso, err) {
+    if (!updatedTime) return;
+    var d = iso ? new Date(iso) : new Date();
+    if (isNaN(d.getTime())) d = new Date();
+    updatedTime.textContent = fmtClock(d) + (err ? " · cached" : "");
   }
 
   /* ---------- Scale-to-fit (use the LAYOUT viewport) ----------
@@ -319,16 +392,11 @@
     var s = Math.min(vw / 1280, vh / 800);
 
     // Don't upscale past the design (keeps it crisp; exactly 1 at 1280x800).
-    // TABLET_SCALE_MULTIPLIER is intentionally NOT applied here — the layout
-    // viewport already matches the design, so no zoom nudge is needed.
     if (s > 1) s = 1;
     if (s < 0.4) s = 0.4;   // sane floor if the viewport is truly tiny
 
     fit.style.webkitTransform = "scale(" + s + ")";
     fit.style.transform = "scale(" + s + ")";
-
-    lastScale = s;          // expose to the debug overlay
-    updateDebug();
   }
 
   /* ---------- Tablet-kiosk compact layout ----------
@@ -339,8 +407,6 @@
      We don't touch the scale (stays 1). Instead we add body.tablet-compact,
      which re-sizes the canvas to the visible window and tightens spacing so the
      whole dashboard fits. CSS lives in styles.css under body.tablet-compact. */
-  var compactOn = false;
-
   function setBodyClass(name, on) {
     var b = document.body;
     if (!b) return;
@@ -360,82 +426,15 @@
     var iw = window.innerWidth || 0;
     // Compact when the layout viewport is the full ~1280x800 design but the
     // visible window is meaningfully narrower than it (the Lenovo case ~962).
-    compactOn = (cw >= 1260 && cw <= 1300 && ch >= 780 && ch <= 820 &&
-                 iw > 0 && iw < cw - 80);
-    setBodyClass("tablet-compact", compactOn);
-    updateDebug();
+    var isCompact = (cw >= 1260 && cw <= 1300 && ch >= 780 && ch <= 820 &&
+                     iw > 0 && iw < cw - 80);
+    setBodyClass("tablet-compact", isCompact);
   }
 
   // Re-evaluate compact mode first (it changes the canvas size), then re-fit.
   function onViewportChange() {
     applyTabletMode();
     scaleToFit();
-  }
-
-  /* ---------- Temporary viewport debug overlay ---------- */
-  /* Plain JS, no modern CSS. Both boxes are appended straight to <body> so the
-     #fit scale transform never touches them. Remove DEBUG_VIEWPORT/this block
-     once tablet sizing is fixed. */
-  var lastScale = 1;
-  var dbgBox = null;
-
-  function num(v) {
-    return (typeof v === "number" && !isNaN(v)) ? Math.round(v * 1000) / 1000 : "n/a";
-  }
-
-  function buildDebugOverlay() {
-    if (!DEBUG_VIEWPORT || !document.body) return;
-
-    // Top-left readout panel
-    dbgBox = document.createElement("div");
-    dbgBox.id = "dbgViewport";
-    dbgBox.style.position = "fixed";
-    dbgBox.style.top = "0";
-    dbgBox.style.left = "0";
-    dbgBox.style.zIndex = "99999";
-    dbgBox.style.background = "rgba(0,0,0,0.82)";
-    dbgBox.style.color = "#5dff7a";
-    dbgBox.style.font = "11px/1.35 monospace";
-    dbgBox.style.padding = "6px 8px";
-    dbgBox.style.margin = "0";
-    dbgBox.style.whiteSpace = "pre";
-    dbgBox.style.pointerEvents = "none";
-    dbgBox.style.maxWidth = "300px";
-    document.body.appendChild(dbgBox);
-
-    // Tiny build tag, bottom-right
-    var tag = document.createElement("div");
-    tag.id = "dbgBuild";
-    tag.style.position = "fixed";
-    tag.style.right = "0";
-    tag.style.bottom = "0";
-    tag.style.zIndex = "99999";
-    tag.style.background = "rgba(0,0,0,0.6)";
-    tag.style.color = "#9fe8a8";
-    tag.style.font = "10px monospace";
-    tag.style.padding = "2px 6px";
-    tag.style.pointerEvents = "none";
-    tag.textContent = BUILD_ID;
-    document.body.appendChild(tag);
-
-    updateDebug();
-  }
-
-  function updateDebug() {
-    if (!dbgBox) return;
-    var de = document.documentElement || {};
-    var vv = window.visualViewport;
-    var lines = [
-      "BUILD: " + BUILD_ID,
-      "innerW/H:    " + num(window.innerWidth) + " x " + num(window.innerHeight),
-      "screen W/H:  " + num(screen.width) + " x " + num(screen.height),
-      "DPR:         " + num(window.devicePixelRatio),
-      "clientW/H:   " + num(de.clientWidth) + " x " + num(de.clientHeight),
-      "visualVP:    " + (vv ? (num(vv.width) + " x " + num(vv.height)) : "n/a"),
-      "scale:       " + num(lastScale),
-      "compact:     " + (compactOn ? "yes" : "no")
-    ];
-    dbgBox.textContent = lines.join("\n");
   }
 
   /* ---------- Clock ---------- */
@@ -449,7 +448,11 @@
 
   /* ---------- Boot ---------- */
   function init() {
-    buildDebugOverlay();    // temporary — see DEBUG_VIEWPORT
+    // Internal version marker — not shown on screen, but readable in devtools
+    // / view-source as <html data-build="..."> to confirm the live build.
+    if (document.documentElement) {
+      document.documentElement.setAttribute("data-build", BUILD_ID);
+    }
     applyTabletMode();      // toggle compact kiosk layout before first paint
     scaleToFit();
     if (window.addEventListener) {
@@ -465,7 +468,11 @@
     setInterval(tickClock, 1000);
 
     loadAndRender(true);
-    refreshTimer = setInterval(function () { loadAndRender(false); }, REFRESH_MS);
+    loadWeather();
+    refreshTimer = setInterval(function () {
+      loadAndRender(false);
+      loadWeather();
+    }, REFRESH_MS);
 
     // tap the hero to skip to the next headline (touch-friendly)
     hero.addEventListener("click", function () {

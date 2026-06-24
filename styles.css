@@ -341,7 +341,7 @@ body {
 }
 .upnext li.current .up-title { color: #ffffff; }
 
-/* ===================== Bottom strip ===================== */
+/* ===================== Bottom strip: weather ===================== */
 .strip {
   -webkit-flex: 0 0 118px;
   flex: 0 0 118px;
@@ -349,8 +349,6 @@ body {
   display: -webkit-flex;
   display: flex;
 }
-.strip > * { margin-right: 18px; }
-.strip > *:last-child { margin-right: 0; }
 .strip-card {
   background-color: #141d19;
   border: 1px solid rgba(255,255,255,0.07);
@@ -359,12 +357,22 @@ body {
   display: flex;
   -webkit-align-items: center;
   align-items: center;
-  padding: 0 26px;
 }
 .weather {
   -webkit-box-flex: 1;
   -webkit-flex: 1 1 auto;
   flex: 1 1 auto;
+  -webkit-justify-content: space-between;
+  justify-content: space-between;
+  padding: 0 30px;
+}
+
+/* ---- current conditions (left) ---- */
+.weather-main {
+  display: -webkit-flex;
+  display: flex;
+  -webkit-align-items: center;
+  align-items: center;
 }
 .weather-icon {
   width: 58px; height: 58px; border-radius: 16px;
@@ -374,7 +382,7 @@ body {
   -webkit-flex: 0 0 58px;
   flex: 0 0 58px;
   position: relative;
-  margin-right: 22px;
+  margin-right: 20px;
 }
 .weather-icon-cloud {
   position: absolute; right: -6px; bottom: -2px;
@@ -382,55 +390,107 @@ body {
   background-color: rgba(230,238,234,0.85);
   box-shadow: -10px 0 0 -2px rgba(230,238,234,0.85);
 }
-.weather-text {
+.weather-now {
   display: -webkit-flex;
   display: flex;
   -webkit-flex-direction: column;
   flex-direction: column;
 }
-.weather-temp {
-  font-family: "Newsreader", Georgia, "Times New Roman", serif;
-  font-size: 26px; font-weight: 600; margin-bottom: 6px;
+.weather-place {
+  display: -webkit-flex;
+  display: flex;
+  -webkit-align-items: center;
+  align-items: center;
+  margin-bottom: 4px;
 }
-.weather-label {
+.weather-city {
+  font-size: 15px; letter-spacing: 1.5px; text-transform: uppercase;
+  color: #9fb0a8; font-weight: 700; margin-right: 12px;
+}
+.weather-updated {
   font-family: "IBM Plex Mono", "Courier New", monospace;
-  font-size: 14px; color: #6f8079; letter-spacing: 0.5px;
+  font-size: 12px; color: #6f8079; letter-spacing: 0.3px;
+  display: -webkit-flex;
+  display: flex;
+  -webkit-align-items: center;
+  align-items: center;
 }
-
-.status {
-  -webkit-flex: 0 0 320px;
-  flex: 0 0 320px;
-}
-.dot-live {
-  width: 14px; height: 14px; border-radius: 50%;
+.weather-updated-dot {
+  width: 8px; height: 8px; border-radius: 50%;
   background-color: #4fb583;
-  -webkit-flex: 0 0 14px;
-  flex: 0 0 14px;
-  margin-right: 14px;
+  margin-right: 6px;
   -webkit-animation: pulse 2.2s ease-in-out infinite;
   animation: pulse 2.2s ease-in-out infinite;
 }
 @-webkit-keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
-.status-text { font-size: 19px; color: #9fb0a8; font-weight: 500; }
+.weather-templine {
+  display: -webkit-flex;
+  display: flex;
+  -webkit-align-items: baseline;
+  align-items: baseline;
+}
+.weather-temp {
+  font-family: "Newsreader", Georgia, "Times New Roman", serif;
+  font-size: 40px; font-weight: 600; line-height: 1; margin-right: 14px;
+}
+.weather-cond { font-size: 20px; color: #9fb0a8; font-weight: 500; }
 
-.updated {
-  -webkit-flex: 0 0 300px;
-  flex: 0 0 300px;
+/* ---- now stats (middle) ---- */
+.weather-stats {
+  display: -webkit-flex;
+  display: flex;
+  -webkit-align-items: center;
+  align-items: center;
+}
+.wx-stat {
+  display: -webkit-flex;
+  display: flex;
   -webkit-flex-direction: column;
   flex-direction: column;
-  -webkit-align-items: flex-start;
-  align-items: flex-start;
-  -webkit-justify-content: center;
-  justify-content: center;
+  -webkit-align-items: center;
+  align-items: center;
+  padding: 0 22px;
+  border-left: 1px solid rgba(255,255,255,0.07);
 }
-.updated-label {
-  font-size: 12px; letter-spacing: 2px; text-transform: uppercase;
+.wx-stat:first-child { border-left: none; }
+.wx-k {
+  font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase;
   color: #6f8079; font-weight: 700; margin-bottom: 6px;
 }
-.updated-time {
+.wx-v {
   font-family: "IBM Plex Mono", "Courier New", monospace;
-  font-size: 24px; color: #eef3f0; letter-spacing: 0.5px;
+  font-size: 19px; color: #eef3f0; font-weight: 500;
+}
+
+/* ---- today / tomorrow forecast (right) ---- */
+.weather-forecast {
+  display: -webkit-flex;
+  display: flex;
+  -webkit-align-items: stretch;
+  align-items: stretch;
+}
+.wx-day {
+  display: -webkit-flex;
+  display: flex;
+  -webkit-flex-direction: column;
+  flex-direction: column;
+  -webkit-justify-content: center;
+  justify-content: center;
+  padding: 0 18px;
+  border-left: 1px solid rgba(255,255,255,0.07);
+}
+.wx-day-name {
+  font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase;
+  color: #9fb0a8; font-weight: 700; margin-bottom: 5px;
+}
+.wx-day-temp {
+  font-family: "Newsreader", Georgia, "Times New Roman", serif;
+  font-size: 18px; color: #eef3f0; font-weight: 600; margin-bottom: 3px;
+}
+.wx-day-rain {
+  font-family: "IBM Plex Mono", "Courier New", monospace;
+  font-size: 13px; color: #5a9fdb;
 }
 
 /* ===================== Badges ===================== */
@@ -488,10 +548,10 @@ body.tablet-compact .dash {
 
 /* ---- Top bar ---- */
 body.tablet-compact .topbar {
-  height: 46px;
-  -webkit-flex: 0 0 46px;
-  flex: 0 0 46px;
-  margin-bottom: 10px;
+  height: 44px;
+  -webkit-flex: 0 0 44px;
+  flex: 0 0 44px;
+  margin-bottom: 8px;
 }
 body.tablet-compact .brand-name { font-size: 24px; }
 body.tablet-compact .brand-sub  { font-size: 11px; letter-spacing: 1.6px; }
@@ -500,7 +560,7 @@ body.tablet-compact .clock-time { font-size: 30px; }
 body.tablet-compact .clock-date { font-size: 13px; margin-top: 3px; }
 
 /* ---- Stage / hero ---- */
-body.tablet-compact .stage { margin-bottom: 10px; }
+body.tablet-compact .stage { margin-bottom: 8px; }
 body.tablet-compact .hero {
   margin-right: 12px;
   border-radius: 16px;
@@ -544,33 +604,33 @@ body.tablet-compact .up-src { font-size: 11px; margin-bottom: 3px; }
 body.tablet-compact .up-title { font-size: 16px; line-height: 1.26; }
 body.tablet-compact .up-rail { margin-right: 11px; }
 
-/* ---- Bottom strip ---- */
+/* ---- Bottom strip: compact weather ---- */
 body.tablet-compact .strip {
-  height: 76px;
-  -webkit-flex: 0 0 76px;
-  flex: 0 0 76px;
+  height: 74px;
+  -webkit-flex: 0 0 74px;
+  flex: 0 0 74px;
 }
-body.tablet-compact .strip > * { margin-right: 12px; }
-body.tablet-compact .strip-card { border-radius: 16px; padding: 0 18px; }
+body.tablet-compact .weather { padding: 0 18px; }
 body.tablet-compact .weather-icon {
-  width: 44px; height: 44px; border-radius: 12px;
-  -webkit-flex: 0 0 44px;
-  flex: 0 0 44px;
-  margin-right: 16px;
+  width: 40px; height: 40px; border-radius: 11px;
+  -webkit-flex: 0 0 40px;
+  flex: 0 0 40px;
+  margin-right: 13px;
 }
-body.tablet-compact .weather-temp  { font-size: 20px; margin-bottom: 3px; }
-body.tablet-compact .weather-label { font-size: 12px; }
-body.tablet-compact .status {
-  -webkit-flex: 0 0 250px;
-  flex: 0 0 250px;
-}
-body.tablet-compact .status-text { font-size: 16px; }
-body.tablet-compact .updated {
-  -webkit-flex: 0 0 210px;
-  flex: 0 0 210px;
-}
-body.tablet-compact .updated-label { margin-bottom: 4px; }
-body.tablet-compact .updated-time { font-size: 20px; }
+body.tablet-compact .weather-icon-cloud { width: 24px; height: 14px; right: -4px; }
+body.tablet-compact .weather-place { margin-bottom: 2px; }
+body.tablet-compact .weather-city { font-size: 12px; letter-spacing: 1px; margin-right: 8px; }
+body.tablet-compact .weather-updated { font-size: 10px; }
+body.tablet-compact .weather-updated-dot { width: 6px; height: 6px; margin-right: 5px; }
+body.tablet-compact .weather-temp { font-size: 30px; margin-right: 10px; }
+body.tablet-compact .weather-cond { font-size: 15px; }
+body.tablet-compact .wx-stat { padding: 0 13px; }
+body.tablet-compact .wx-k { font-size: 10px; letter-spacing: 1px; margin-bottom: 3px; }
+body.tablet-compact .wx-v { font-size: 15px; }
+body.tablet-compact .wx-day { padding: 0 12px; }
+body.tablet-compact .wx-day-name { font-size: 10px; letter-spacing: 1px; margin-bottom: 3px; }
+body.tablet-compact .wx-day-temp { font-size: 15px; margin-bottom: 2px; }
+body.tablet-compact .wx-day-rain { font-size: 11px; }
 
 /* ---- Badge ---- */
 body.tablet-compact .badge { font-size: 12px; padding: 5px 11px; }

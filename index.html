@@ -63,24 +63,48 @@
       </aside>
     </main>
 
-    <!-- ===== Bottom strip: weather placeholder + status ===== -->
+    <!-- ===== Bottom strip: Dublin weather ===== -->
     <footer class="strip">
       <div class="strip-card weather" id="weatherCard">
-        <div class="weather-icon"><span class="weather-icon-cloud"></span></div>
-        <div class="weather-text">
-          <span class="weather-temp">Weather</span>
-          <span class="weather-label">Live forecast arriving in V2</span>
+
+        <!-- current conditions -->
+        <div class="weather-main">
+          <div class="weather-icon" id="weatherIcon"><span class="weather-icon-cloud"></span></div>
+          <div class="weather-now">
+            <div class="weather-place">
+              <span class="weather-city">Dublin</span>
+              <span class="weather-updated">
+                <span class="weather-updated-dot"></span>Updated <span id="updatedTime">—</span>
+              </span>
+            </div>
+            <div class="weather-templine">
+              <span class="weather-temp" id="weatherTemp">--&deg;</span>
+              <span class="weather-cond" id="weatherCond">&mdash;</span>
+            </div>
+          </div>
         </div>
-      </div>
 
-      <div class="strip-card status">
-        <span class="dot-live" id="liveDot"></span>
-        <span class="status-text" id="rotationStatus">Rotating headlines</span>
-      </div>
+        <!-- now stats -->
+        <div class="weather-stats">
+          <div class="wx-stat"><span class="wx-k">Rain</span><span class="wx-v" id="weatherRain">--%</span></div>
+          <div class="wx-stat"><span class="wx-k">Precip</span><span class="wx-v" id="weatherPrecip">-- mm</span></div>
+          <div class="wx-stat"><span class="wx-k">Wind</span><span class="wx-v" id="weatherWind">-- km/h</span></div>
+        </div>
 
-      <div class="strip-card updated">
-        <span class="updated-label">Last updated</span>
-        <span class="updated-time" id="updatedTime">—</span>
+        <!-- today / tomorrow mini forecast -->
+        <div class="weather-forecast">
+          <div class="wx-day">
+            <span class="wx-day-name">Today</span>
+            <span class="wx-day-temp" id="fcTodayTemp">--&deg; / --&deg;</span>
+            <span class="wx-day-rain" id="fcTodayRain">--%</span>
+          </div>
+          <div class="wx-day">
+            <span class="wx-day-name">Tomorrow</span>
+            <span class="wx-day-temp" id="fcTomorrowTemp">--&deg; / --&deg;</span>
+            <span class="wx-day-rain" id="fcTomorrowRain">--%</span>
+          </div>
+        </div>
+
       </div>
     </footer>
 

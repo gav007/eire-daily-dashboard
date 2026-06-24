@@ -1,0 +1,12 @@
+# ---- Secrets — never commit these ----
+openweather.txt
+.env
+.env.*
+.dev.vars
+*.key
+secrets.*
+
+# ---- OS / editor cruft ----
+.DS_Store
+Thumbs.db
+*.log

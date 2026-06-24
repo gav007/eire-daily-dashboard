@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 500" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Dublin skyline at dusk">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#15231c"/>
+      <stop offset="0.55" stop-color="#1b2c23"/>
+      <stop offset="1" stop-color="#2c3d2e"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d8a44a" stop-opacity="0"/>
+      <stop offset="1" stop-color="#d8a44a" stop-opacity="0.22"/>
+    </linearGradient>
+  </defs>
+
+  <!-- sky + horizon glow + moon -->
+  <rect x="0" y="0" width="1200" height="500" fill="url(#sky)"/>
+  <rect x="0" y="250" width="1200" height="200" fill="url(#glow)"/>
+  <circle cx="1040" cy="112" r="44" fill="#e7d3a0" opacity="0.85"/>
+
+  <!-- skyline silhouette -->
+  <g fill="#0e1814">
+    <!-- left Georgian terraces -->
+    <rect x="0"   y="360" width="64"  height="60"/>
+    <rect x="62"  y="346" width="72"  height="74"/>
+    <rect x="132" y="368" width="56"  height="52"/>
+    <rect x="186" y="356" width="58"  height="64"/>
+
+    <!-- cathedral -->
+    <rect x="256" y="300" width="96"  height="120"/>
+    <polygon points="256,300 304,254 352,300"/>
+    <rect x="295" y="208" width="18"  height="92"/>
+    <polygon points="288,208 304,150 320,208"/>
+
+    <!-- mid terraces -->
+    <rect x="360" y="362" width="70"  height="58"/>
+    <rect x="432" y="344" width="52"  height="76"/>
+    <rect x="488" y="366" width="64"  height="54"/>
+
+    <!-- The Spire of Dublin -->
+    <polygon points="594,420 599,108 601,108 606,420"/>
+
+    <!-- office blocks -->
+    <rect x="624" y="322" width="58"  height="98"/>
+    <rect x="686" y="298" width="68"  height="122"/>
+    <rect x="760" y="344" width="46"  height="76"/>
+
+    <!-- right terraces -->
+    <rect x="1000" y="360" width="64" height="60"/>
+    <rect x="1064" y="344" width="58" height="76"/>
+    <rect x="1122" y="364" width="78" height="56"/>
+  </g>
+
+  <!-- Spire tip light -->
+  <circle cx="600" cy="106" r="5" fill="#e7d3a0"/>
+
+  <!-- Samuel Beckett Bridge (harp) -->
+  <g stroke="#0e1814" stroke-width="2" fill="none" opacity="0.95">
+    <line x1="852" y1="420" x2="904" y2="244"/>
+    <line x1="904" y1="244" x2="838" y2="416"/>
+    <line x1="904" y1="244" x2="862" y2="416"/>
+    <line x1="904" y1="244" x2="886" y2="416"/>
+    <line x1="904" y1="244" x2="922" y2="416"/>
+    <line x1="904" y1="244" x2="948" y2="416"/>
+    <line x1="904" y1="244" x2="974" y2="416"/>
+  </g>
+  <rect x="820" y="416" width="170" height="8" fill="#0e1814"/>
+
+  <!-- Liffey + reflections -->
+  <rect x="0" y="420" width="1200" height="80" fill="#0b1310"/>
+  <g fill="#d8a44a" opacity="0.10">
+    <rect x="597" y="420" width="6" height="70"/>
+    <rect x="900" y="420" width="4" height="58"/>
+  </g>
+  <g fill="#e7d3a0" opacity="0.06">
+    <rect x="1030" y="420" width="20" height="60"/>
+  </g>
+</svg>
