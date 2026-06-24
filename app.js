@@ -480,6 +480,22 @@
       if (rotateTimer) clearInterval(rotateTimer);
       rotateTimer = setInterval(advance, ROTATE_MS);
     }, false);
+
+    // test audio button (temporary proof-of-audio test)
+    var testBtn = $("testAudioBtn");
+    if (testBtn) {
+      testBtn.addEventListener("click", function () {
+        var audio = $("testAudio");
+        if (!audio) {
+          console.warn("Test audio element not found");
+          return;
+        }
+        audio.volume = 0.3;
+        audio.play().catch(function (e) {
+          console.warn("Audio playback failed:", e.message);
+        });
+      }, false);
+    }
   }
 
   if (document.readyState === "loading") {
