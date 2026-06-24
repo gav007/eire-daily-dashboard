@@ -11,6 +11,14 @@
   var REFRESH_MS  = 5 * 60 * 1000; // how often we'd re-poll the backend
   var API_URL     = null;    // e.g. "/api/news" — when set, fetchNews() uses it
 
+  /* Build tag — bump this string whenever you ship, so you can confirm the
+     tablet actually loaded the newest code (shown bottom-right + in overlay). */
+  var BUILD_ID = "debug-viewport-001";
+
+  /* Temporary viewport debug overlay. Flip to false (or delete the block) once
+     the tablet sizing is sorted. */
+  var DEBUG_VIEWPORT = true;
+
   /* Tablet sizing knob. The dashboard is designed at a fixed 1280x800 and
      scaled to fit the screen. On the Lenovo tablet the plain fit can look a
      touch "zoomed out" because of letterbox bars, so this multiplier pushes
@@ -315,6 +323,74 @@
 
     fit.style.webkitTransform = "scale(" + s + ")";
     fit.style.transform = "scale(" + s + ")";
+
+    lastScale = s;          // expose to the debug overlay
+    updateDebug();
+  }
+
+  /* ---------- Temporary viewport debug overlay ---------- */
+  /* Plain JS, no modern CSS. Both boxes are appended straight to <body> so the
+     #fit scale transform never touches them. Remove DEBUG_VIEWPORT/this block
+     once tablet sizing is fixed. */
+  var lastScale = 1;
+  var dbgBox = null;
+
+  function num(v) {
+    return (typeof v === "number" && !isNaN(v)) ? Math.round(v * 1000) / 1000 : "n/a";
+  }
+
+  function buildDebugOverlay() {
+    if (!DEBUG_VIEWPORT || !document.body) return;
+
+    // Top-left readout panel
+    dbgBox = document.createElement("div");
+    dbgBox.id = "dbgViewport";
+    dbgBox.style.position = "fixed";
+    dbgBox.style.top = "0";
+    dbgBox.style.left = "0";
+    dbgBox.style.zIndex = "99999";
+    dbgBox.style.background = "rgba(0,0,0,0.82)";
+    dbgBox.style.color = "#5dff7a";
+    dbgBox.style.font = "11px/1.35 monospace";
+    dbgBox.style.padding = "6px 8px";
+    dbgBox.style.margin = "0";
+    dbgBox.style.whiteSpace = "pre";
+    dbgBox.style.pointerEvents = "none";
+    dbgBox.style.maxWidth = "300px";
+    document.body.appendChild(dbgBox);
+
+    // Tiny build tag, bottom-right
+    var tag = document.createElement("div");
+    tag.id = "dbgBuild";
+    tag.style.position = "fixed";
+    tag.style.right = "0";
+    tag.style.bottom = "0";
+    tag.style.zIndex = "99999";
+    tag.style.background = "rgba(0,0,0,0.6)";
+    tag.style.color = "#9fe8a8";
+    tag.style.font = "10px monospace";
+    tag.style.padding = "2px 6px";
+    tag.style.pointerEvents = "none";
+    tag.textContent = BUILD_ID;
+    document.body.appendChild(tag);
+
+    updateDebug();
+  }
+
+  function updateDebug() {
+    if (!dbgBox) return;
+    var de = document.documentElement || {};
+    var vv = window.visualViewport;
+    var lines = [
+      "BUILD: " + BUILD_ID,
+      "innerW/H:    " + num(window.innerWidth) + " x " + num(window.innerHeight),
+      "screen W/H:  " + num(screen.width) + " x " + num(screen.height),
+      "DPR:         " + num(window.devicePixelRatio),
+      "clientW/H:   " + num(de.clientWidth) + " x " + num(de.clientHeight),
+      "visualVP:    " + (vv ? (num(vv.width) + " x " + num(vv.height)) : "n/a"),
+      "scale:       " + num(lastScale)
+    ];
+    dbgBox.textContent = lines.join("\n");
   }
 
   /* ---------- Clock ---------- */
@@ -328,10 +404,15 @@
 
   /* ---------- Boot ---------- */
   function init() {
+    buildDebugOverlay();    // temporary — see DEBUG_VIEWPORT
     scaleToFit();
     if (window.addEventListener) {
       window.addEventListener("resize", scaleToFit, false);
       window.addEventListener("orientationchange", scaleToFit, false);
+      // visualViewport fires on pinch-zoom / on-screen keyboard / URL-bar changes
+      if (window.visualViewport && window.visualViewport.addEventListener) {
+        window.visualViewport.addEventListener("resize", updateDebug, false);
+      }
     }
 
     tickClock();
