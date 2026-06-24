@@ -13,7 +13,7 @@
 
   /* Build tag — bump this string whenever you ship, so you can confirm the
      tablet actually loaded the newest code (shown bottom-right + in overlay). */
-  var BUILD_ID = "layout-viewport-fix-001";
+  var BUILD_ID = "tablet-compact-layout-001";
 
   /* Temporary viewport debug overlay. Flip to false (or delete the block) once
      the tablet sizing is sorted. */
@@ -331,6 +331,47 @@
     updateDebug();
   }
 
+  /* ---------- Tablet-kiosk compact layout ----------
+     On the Lenovo Yoga Tab 3 in Fully Kiosk, the LAYOUT viewport is the full
+     1280x800 design (clientWidth/clientHeight), but the visible glass
+     (window.innerWidth/innerHeight, ~962x602) is smaller and anchored top-left
+     with no scroll — so the right column and bottom strip fall off-screen.
+     We don't touch the scale (stays 1). Instead we add body.tablet-compact,
+     which re-sizes the canvas to the visible window and tightens spacing so the
+     whole dashboard fits. CSS lives in styles.css under body.tablet-compact. */
+  var compactOn = false;
+
+  function setBodyClass(name, on) {
+    var b = document.body;
+    if (!b) return;
+    var wrapped = " " + b.className + " ";
+    var has = wrapped.indexOf(" " + name + " ") !== -1;
+    if (on && !has) {
+      b.className = (b.className + " " + name).replace(/^\s+/, "");
+    } else if (!on && has) {
+      b.className = wrapped.split(" " + name + " ").join(" ").replace(/^\s+|\s+$/g, "");
+    }
+  }
+
+  function applyTabletMode() {
+    var de = document.documentElement || {};
+    var cw = de.clientWidth  || 0;
+    var ch = de.clientHeight || 0;
+    var iw = window.innerWidth || 0;
+    // Compact when the layout viewport is the full ~1280x800 design but the
+    // visible window is meaningfully narrower than it (the Lenovo case ~962).
+    compactOn = (cw >= 1260 && cw <= 1300 && ch >= 780 && ch <= 820 &&
+                 iw > 0 && iw < cw - 80);
+    setBodyClass("tablet-compact", compactOn);
+    updateDebug();
+  }
+
+  // Re-evaluate compact mode first (it changes the canvas size), then re-fit.
+  function onViewportChange() {
+    applyTabletMode();
+    scaleToFit();
+  }
+
   /* ---------- Temporary viewport debug overlay ---------- */
   /* Plain JS, no modern CSS. Both boxes are appended straight to <body> so the
      #fit scale transform never touches them. Remove DEBUG_VIEWPORT/this block
@@ -391,7 +432,8 @@
       "DPR:         " + num(window.devicePixelRatio),
       "clientW/H:   " + num(de.clientWidth) + " x " + num(de.clientHeight),
       "visualVP:    " + (vv ? (num(vv.width) + " x " + num(vv.height)) : "n/a"),
-      "scale:       " + num(lastScale)
+      "scale:       " + num(lastScale),
+      "compact:     " + (compactOn ? "yes" : "no")
     ];
     dbgBox.textContent = lines.join("\n");
   }
@@ -408,13 +450,14 @@
   /* ---------- Boot ---------- */
   function init() {
     buildDebugOverlay();    // temporary — see DEBUG_VIEWPORT
+    applyTabletMode();      // toggle compact kiosk layout before first paint
     scaleToFit();
     if (window.addEventListener) {
-      window.addEventListener("resize", scaleToFit, false);
-      window.addEventListener("orientationchange", scaleToFit, false);
+      window.addEventListener("resize", onViewportChange, false);
+      window.addEventListener("orientationchange", onViewportChange, false);
       // visualViewport fires on pinch-zoom / on-screen keyboard / URL-bar changes
       if (window.visualViewport && window.visualViewport.addEventListener) {
-        window.visualViewport.addEventListener("resize", updateDebug, false);
+        window.visualViewport.addEventListener("resize", onViewportChange, false);
       }
     }
 
