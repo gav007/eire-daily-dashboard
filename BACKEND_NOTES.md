@@ -1,10 +1,41 @@
-# Backend notes — Cloudflare Worker API (next step)
+# Backend notes — Cloudflare Worker API
 
 The frontend calls the backend **only** (never RSS/OpenWeather directly):
 `app.js` → `API_BASE + /api/news` and `API_BASE + /api/weather`.
 On any failure the frontend falls back to mock data, so the kiosk never breaks.
 
-## Weather — OpenWeather
+## Architecture — one Worker serves site + API
+
+`wrangler.toml` configures a single Worker (`src/worker.js`) that:
+- Serves the static frontend from the repo root via the `[assets]` binding
+  (index.html, app.js, styles.css, assets/**).
+- Handles `GET /api/news` and `GET /api/health` in code.
+
+Because the site and API share **one origin**, the frontend keeps `API_BASE = ""`
+and calls `/api/news` — nothing to change on the frontend. Point the tablet at the
+Worker's URL (`https://eire-daily-dashboard.<account>.workers.dev`, or a custom domain).
+
+### `/api/news` — DONE ✅ (built + verified against live feeds 2026-06-24)
+- Fetches RTÉ (10), TheJournal (10), Dublin Live *Dublin-local* (5) in parallel.
+- Image order: `media:content` → `media:thumbnail` → `enclosure` → `<img>` in body.
+- Merges → sorts newest-first → de-dupes by article URL → caches **10 min** (Cache API).
+- One feed down ⇒ others still return. **All** feeds down ⇒ `502` JSON (not cached).
+- Verified: 25 items, sorted, 0 missing fields, 0 null images, JSON matches the shape below.
+- `/api/health` ⇒ `{ "status": "ok", "time": "ISO" }`.
+
+### Deploy (wrangler)
+```
+npm install            # gets wrangler (devDependency)
+npx wrangler login     # once, to authorise your Cloudflare account
+npx wrangler deploy    # publishes the Worker + static assets
+npx wrangler tail      # live logs (see feed failures, etc.)
+```
+- **Asset-upload fix:** `.assetsignore` (next to `wrangler.toml`) stops `.git`, `.wrangler`,
+  `node_modules`, `src`, `openweather.txt`, `.env`, `.dev.vars`, configs and docs from being
+  uploaded as public files. Only the real frontend files are published.
+- Weather endpoint is **not** wired yet — frontend uses MOCK_WEATHER until `/api/weather` exists.
+
+## Weather — OpenWeather (NOT wired yet)
 
 - **Location (fixed):** lat `53.37644855902749`, lon `-6.214687313622119`, elev ~30 m (north Dublin).
   City label shown on the dashboard is the static string "Dublin".

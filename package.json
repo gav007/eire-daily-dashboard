@@ -1,0 +1,15 @@
+{
+  "name": "eire-daily-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Irish news & weather kiosk dashboard + Cloudflare Worker API",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "validate-feeds": "node validate-feeds.js"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

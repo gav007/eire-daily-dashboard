@@ -1,0 +1,18 @@
+# Cloudflare Worker config for Éire Daily.
+# Deploy with:  npx wrangler deploy
+# Local dev:    npx wrangler dev   (serves the site + API at http://localhost:8787)
+
+name = "eire-daily-dashboard"
+main = "src/worker.js"
+compatibility_date = "2025-01-01"
+
+# Serve the existing static frontend (index.html, app.js, styles.css, assets/)
+# from the repo root. The Worker in src/worker.js runs for /api/* and anything
+# that isn't a real file; real files are served directly by the asset server.
+#
+# IMPORTANT: directory = "." would otherwise upload .git, node_modules, the
+# Worker source, secrets, etc. as public files. The .assetsignore file next to
+# this config lists everything that must NOT be uploaded.
+[assets]
+directory = "."
+binding = "ASSETS"

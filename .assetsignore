@@ -1,0 +1,33 @@
+# Files in the assets directory (".") that must NOT be uploaded as public
+# static assets. Uses .gitignore-style patterns. This is what stops Cloudflare
+# from publishing .git, secrets, the Worker source, etc.
+#
+# Whatever is NOT listed here IS served publicly. The real frontend files —
+# index.html, app.js, styles.css, assets/** — are intentionally left in.
+
+# Version control / tooling
+.git
+.gitignore
+.gitattributes
+.assetsignore
+.wrangler
+node_modules
+
+# Worker source + project config (server code, not public files)
+src
+wrangler.toml
+wrangler.jsonc
+package.json
+package-lock.json
+
+# Secrets — must never be public
+openweather.txt
+.env
+.env.*
+.dev.vars
+*.key
+secrets.*
+
+# Docs / dev scripts — no need to publish
+*.md
+validate-feeds.js

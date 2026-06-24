@@ -6,6 +6,10 @@ openweather.txt
 *.key
 secrets.*
 
+# ---- Node / Wrangler tooling ----
+node_modules/
+.wrangler/
+
 # ---- OS / editor cruft ----
 .DS_Store
 Thumbs.db
