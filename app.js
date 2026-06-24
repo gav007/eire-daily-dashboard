@@ -11,6 +11,16 @@
   var REFRESH_MS  = 5 * 60 * 1000; // how often we'd re-poll the backend
   var API_URL     = null;    // e.g. "/api/news" — when set, fetchNews() uses it
 
+  /* Tablet sizing knob. The dashboard is designed at a fixed 1280x800 and
+     scaled to fit the screen. On the Lenovo tablet the plain fit can look a
+     touch "zoomed out" because of letterbox bars, so this multiplier pushes
+     the canvas to fill more of the visible area. Tune it by hand: try 1.05,
+     1.10, 1.15 (1.00 = exact letterbox fit, no zoom).
+     It is self-limiting: scaleToFit() never zooms past the point where the
+     empty outer padding has bled off the edges, so headlines, summary and
+     the side column are never clipped — even on a smaller screen. */
+  var TABLET_SCALE_MULTIPLIER = 1.12;
+
   /* ---------- Source styling map ---------- */
   var SOURCES = {
     "RTÉ News":    { cls: "src-rte",     glyph: "R" },
@@ -286,9 +296,23 @@
     if (!fit) return;
     var sw = window.innerWidth || 1280;
     var sh = window.innerHeight || 800;
-    var s = Math.min(sw / 1280, sh / 800);
-    if (s > 1) s = 1;          // never upscale (avoids blur on the native panel)
-    if (s < 0.4) s = 0.4;      // sane floor
+
+    // Natural letterbox fit: the whole 1280x800 canvas is visible, no clipping.
+    var fitScale = Math.min(sw / 1280, sh / 800);
+
+    // How far we can zoom before *content* (everything inside the .dash
+    // padding — 26px left/right, 22+24px top/bottom) would reach the screen
+    // edge. Zooming up to here only bleeds the empty outer padding off-screen,
+    // never the headlines/summary/side column.
+    var contentSafe = Math.min(sw / (1280 - 52), sh / (800 - 46));
+
+    // Apply the manual tablet knob on top of the natural fit, then clamp:
+    //   - never past contentSafe  -> important content is never clipped
+    //   - never below 0.4         -> never vanish on a tiny viewport
+    var s = fitScale * TABLET_SCALE_MULTIPLIER;
+    if (s > contentSafe) s = contentSafe;
+    if (s < 0.4) s = 0.4;
+
     fit.style.webkitTransform = "scale(" + s + ")";
     fit.style.transform = "scale(" + s + ")";
   }
