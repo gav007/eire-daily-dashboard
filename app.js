@@ -13,7 +13,7 @@
 
   /* Build tag — bump this string whenever you ship, so you can confirm the
      tablet actually loaded the newest code (shown bottom-right + in overlay). */
-  var BUILD_ID = "debug-viewport-001";
+  var BUILD_ID = "layout-viewport-fix-001";
 
   /* Temporary viewport debug overlay. Flip to false (or delete the block) once
      the tablet sizing is sorted. */
@@ -298,28 +298,31 @@
     });
   }
 
-  /* ---------- Scale-to-fit (tolerate browser UI bars) ---------- */
+  /* ---------- Scale-to-fit (use the LAYOUT viewport) ----------
+     The <meta name="viewport" content="width=1280"> pins the layout viewport
+     to 1280x800 — that is what the dashboard is actually laid out against, and
+     it is reported by document.documentElement.clientWidth/clientHeight.
+     window.innerWidth / screen.width / visualViewport report the smaller
+     *visual* viewport (e.g. 962x602 after the tablet's 1.33 DPR), which would
+     wrongly shrink the design. So we size off clientWidth/clientHeight.
+     When client == 1280x800 the scale is exactly 1; we only shrink if the
+     layout viewport is genuinely smaller than the 1280x800 design. */
   function scaleToFit() {
     var fit = document.getElementById("fit");
     if (!fit) return;
-    var sw = window.innerWidth || 1280;
-    var sh = window.innerHeight || 800;
 
-    // Natural letterbox fit: the whole 1280x800 canvas is visible, no clipping.
-    var fitScale = Math.min(sw / 1280, sh / 800);
+    var de = document.documentElement || {};
+    var vw = de.clientWidth  || window.innerWidth  || 1280;
+    var vh = de.clientHeight || window.innerHeight || 800;
 
-    // How far we can zoom before *content* (everything inside the .dash
-    // padding — 26px left/right, 22+24px top/bottom) would reach the screen
-    // edge. Zooming up to here only bleeds the empty outer padding off-screen,
-    // never the headlines/summary/side column.
-    var contentSafe = Math.min(sw / (1280 - 52), sh / (800 - 46));
+    // Largest scale that shows the whole 1280x800 canvas with nothing clipped.
+    var s = Math.min(vw / 1280, vh / 800);
 
-    // Apply the manual tablet knob on top of the natural fit, then clamp:
-    //   - never past contentSafe  -> important content is never clipped
-    //   - never below 0.4         -> never vanish on a tiny viewport
-    var s = fitScale * TABLET_SCALE_MULTIPLIER;
-    if (s > contentSafe) s = contentSafe;
-    if (s < 0.4) s = 0.4;
+    // Don't upscale past the design (keeps it crisp; exactly 1 at 1280x800).
+    // TABLET_SCALE_MULTIPLIER is intentionally NOT applied here — the layout
+    // viewport already matches the design, so no zoom nudge is needed.
+    if (s > 1) s = 1;
+    if (s < 0.4) s = 0.4;   // sane floor if the viewport is truly tiny
 
     fit.style.webkitTransform = "scale(" + s + ")";
     fit.style.transform = "scale(" + s + ")";
