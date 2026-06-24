@@ -8,6 +8,7 @@
       (configured in wrangler.toml -> [assets]).
    2. Handles the API routes the frontend calls:
         GET /api/news    -> live, normalised Irish headlines
+        GET /api/weather -> live Dublin weather from Open-Meteo
         GET /api/health  -> { status: "ok", time: ISO }
 
    Because the site and the API share ONE origin, the frontend can
@@ -21,7 +22,6 @@
        below. Anything we don't recognise we hand back to ASSETS
        (so the 404 page / index.html still works).
 
-   Weather is intentionally NOT wired here yet (separate task).
    ============================================================ */
 
 /* ---------- Config ---------- */
@@ -35,9 +35,19 @@ const FEEDS = [
   { source: "Dublin Live", url: "https://www.dublinlive.ie/news/dublin-news/?service=rss", limit: 5 }
 ];
 
-const CACHE_SECONDS = 600;   // 10 minutes — how long an /api/news response is reused
+const CACHE_SECONDS = 600;   // 10 minutes — how long a good API response is reused
 const FEED_TIMEOUT_MS = 8000; // give up on a slow feed after 8s (others still return)
+const WEATHER_TIMEOUT_MS = 8000; // give up on slow weather data after 8s
 const SUMMARY_MAX = 220;     // trim summaries so cards stay tidy
+
+// Dublin coordinates used by the kiosk weather card.
+const WEATHER_URL =
+  "https://api.open-meteo.com/v1/forecast" +
+  "?latitude=53.37645" +
+  "&longitude=-6.21469" +
+  "&current=temperature_2m,precipitation,weather_code,wind_speed_10m" +
+  "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max" +
+  "&timezone=Europe%2FDublin";
 
 /* ---------- Entry point ---------- */
 export default {
@@ -58,6 +68,13 @@ export default {
         return json({ error: "Method not allowed" }, 405);
       }
       return handleNews(request, ctx);
+    }
+
+    if (url.pathname === "/api/weather") {
+      if (request.method !== "GET") {
+        return json({ error: "Method not allowed" }, 405);
+      }
+      return handleWeather(request, ctx);
     }
 
     // Not an API route -> let the static asset server handle it.
@@ -113,6 +130,137 @@ async function handleNews(request, ctx) {
   // cache.put must not block the response, so do it in the background.
   ctx.waitUntil(cache.put(cacheKey, response.clone()));
   return response;
+}
+
+/* ============================================================
+   /api/weather
+   ============================================================ */
+async function handleWeather(request, ctx) {
+  // Weather changes slowly enough for a dashboard, so we reuse a good response
+  // for the same 10-minute window as news. Failed upstream responses are not
+  // cached, because a temporary outage should not become the saved forecast.
+  const cache = caches.default;
+  const cacheKey = new Request(new URL("/api/weather", request.url).toString(), { method: "GET" });
+  const hit = await cache.match(cacheKey);
+  if (hit) return hit;
+
+  try {
+    const payload = await fetchWeather();
+    const response = json(payload, 200, {
+      "Cache-Control": `public, max-age=${CACHE_SECONDS}`
+    });
+    ctx.waitUntil(cache.put(cacheKey, response.clone()));
+    return response;
+  } catch (err) {
+    console.warn("Weather failed:", String(err));
+    return json(
+      { error: "Weather data unavailable", updatedAt: new Date().toISOString() },
+      502
+    );
+  }
+}
+
+async function fetchWeather() {
+  const res = await fetch(WEATHER_URL, {
+    redirect: "follow",
+    signal: AbortSignal.timeout(WEATHER_TIMEOUT_MS),
+    headers: {
+      "Accept": "application/json"
+    }
+  });
+
+  if (!res.ok) throw new Error(`Open-Meteo HTTP ${res.status}`);
+
+  const data = await res.json();
+  return mapOpenMeteoWeather(data);
+}
+
+function mapOpenMeteoWeather(data) {
+  const current = data && data.current;
+  const daily = data && data.daily;
+
+  if (!current || !daily) {
+    throw new Error("Open-Meteo response missing current or daily data");
+  }
+
+  const temperature = current.temperature_2m;
+  const precipitation = current.precipitation;
+  const weatherCode = current.weather_code;
+  const windSpeed = current.wind_speed_10m;
+
+  const todayMax = numberAt(daily.temperature_2m_max, 0);
+  const todayMin = numberAt(daily.temperature_2m_min, 0);
+  const todayRain = numberAt(daily.precipitation_probability_max, 0);
+  const tomorrowMax = numberAt(daily.temperature_2m_max, 1);
+  const tomorrowMin = numberAt(daily.temperature_2m_min, 1);
+  const tomorrowRain = numberAt(daily.precipitation_probability_max, 1);
+
+  // The frontend expects one small, friendly object. Open-Meteo gives us
+  // separate `current` and `daily` sections, so this is where we translate:
+  //   - current temperature/wind/precipitation -> top weather card
+  //   - today's daily rain probability -> current rain chance
+  //   - daily arrays at index 0 and 1 -> today/tomorrow mini forecast
+  if (
+    !isNumber(temperature) ||
+    !isNumber(precipitation) ||
+    !isNumber(weatherCode) ||
+    !isNumber(windSpeed) ||
+    !isNumber(todayMax) ||
+    !isNumber(todayMin) ||
+    !isNumber(todayRain) ||
+    !isNumber(tomorrowMax) ||
+    !isNumber(tomorrowMin) ||
+    !isNumber(tomorrowRain)
+  ) {
+    throw new Error("Open-Meteo response had missing or invalid weather numbers");
+  }
+
+  return {
+    location: "Dublin",
+    temperature: Math.round(temperature),
+    condition: weatherCodeToCondition(weatherCode),
+    rainChance: Math.round(todayRain),
+    precipitation: round1(precipitation),
+    windSpeed: Math.round(windSpeed),
+    updatedAt: new Date().toISOString(),
+    today: {
+      max: Math.round(todayMax),
+      min: Math.round(todayMin),
+      rainChance: Math.round(todayRain)
+    },
+    tomorrow: {
+      max: Math.round(tomorrowMax),
+      min: Math.round(tomorrowMin),
+      rainChance: Math.round(tomorrowRain)
+    }
+  };
+}
+
+function weatherCodeToCondition(code) {
+  // Open-Meteo weather_code is a numeric WMO code. The kiosk does not need
+  // every meteorological nuance, so we collapse it into plain English labels.
+  if (code === 0) return "Clear";
+  if (code === 1 || code === 2) return "Partly cloudy";
+  if (code === 3) return "Cloudy";
+  if (code === 45 || code === 48) return "Fog";
+  if (code === 51 || code === 53 || code === 55 || code === 56 || code === 57) return "Drizzle";
+  if (code === 61 || code === 63 || code === 66 || code === 80 || code === 81) return "Rain";
+  if (code === 65 || code === 67 || code === 82) return "Heavy rain";
+  if (code === 71 || code === 73 || code === 75 || code === 77 || code === 85 || code === 86) return "Snow";
+  if (code === 95 || code === 96 || code === 99) return "Thunderstorm";
+  return "Cloudy";
+}
+
+function numberAt(values, index) {
+  return Array.isArray(values) ? values[index] : undefined;
+}
+
+function isNumber(value) {
+  return typeof value === "number" && isFinite(value);
+}
+
+function round1(value) {
+  return Math.round(value * 10) / 10;
 }
 
 /* Fetch one feed, parse it, and keep only its first `limit` items. */
