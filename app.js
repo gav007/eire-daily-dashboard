@@ -11,6 +11,23 @@
   var ROTATE_MS   = 12000;          // dwell time per headline
   var REFRESH_MS  = 5 * 60 * 1000;  // how often we re-poll the backend
 
+  /* Weather ambience (V1) — see the "Weather ambience" section lower down. */
+  var AMBIENCE_DIR      = "assets/audio/"; // where the loop MP3s live
+  var AMBIENCE_VOLUME   = 0.3;             // low, calm background level
+  var WIND_VERY_KMH     = 35;              // "very windy" threshold
+  var WIND_MOD_KMH      = 20;              // "windy" threshold
+  var AMBIENCE_PREF_KEY = "eireAmbiencePref"; // localStorage: "1" on, "0" muted
+  // Which MP3 plays for each weather/time situation.
+  var AMBIENCE_TRACKS = {
+    rain:      "rain.mp3",          // any rain / drizzle / thunder
+    veryWindy: "windy-beach.mp3",   // windSpeed >= 35
+    windy:     "soft-wind.mp3",     // windSpeed >= 20
+    night:     "night.mp3",         // 21:00–06:00
+    morning:   "bird.mp3",          // 06:00–11:00 + clear/partly cloudy
+    clearDay:  "day-clear.mp3",     // clear during the day
+    calm:      "background-peace.mp3" // default: cloudy / fog / snow / unknown
+  };
+
   /* Backend endpoints. The frontend NEVER fetches RSS directly — it calls these
      Cloudflare Worker endpoints, which normalise RSS + weather into clean JSON.
      API_BASE = "" means same-origin (the Worker/Pages serves this page too).
@@ -337,6 +354,8 @@
     fetchWeather(function (err, w) {
       renderWeather(w);
       setUpdated(w && w.updatedAt, err);
+      lastWeather = w || lastWeather;   // remember for ambience selection
+      applyAmbience();                  // pick + (maybe) play the background track
     });
   }
 
@@ -369,6 +388,120 @@
     var d = iso ? new Date(iso) : new Date();
     if (isNaN(d.getTime())) d = new Date();
     updatedTime.textContent = fmtClock(d) + (err ? " · cached" : "");
+  }
+
+  /* ---------- Weather ambience (V1) ----------
+     One looping background track at a time, chosen from the live weather
+     condition + the tablet's local time. No layering, no extra APIs — it just
+     reuses the /api/weather data we already fetch for the weather card.
+
+     Autoplay note: browsers (and Fully Kiosk) may block audio until the user
+     has tapped the page. So we *try* to play automatically; if that's blocked,
+     the "Enable Sound" button stays visible for a manual start. The user's
+     on/off choice is saved in localStorage and re-tried on the next load. */
+
+  var ambienceEl   = null;   // the <audio> element (assigned in init)
+  var currentTrack = "";     // filename currently loaded, so we don't restart it
+  var lastWeather  = null;   // most recent weather object, for re-picks on refresh
+
+  /* Decide which track fits the weather + time. First match wins (priority). */
+  function pickAmbienceTrack(weather, date) {
+    if (!weather) return AMBIENCE_TRACKS.calm;
+
+    var cond = (weather.condition || "").toLowerCase();
+    var wind = (typeof weather.windSpeed === "number") ? weather.windSpeed : 0;
+    var hour = date.getHours();   // tablet's local hour (same clock as the display)
+
+    var isRainy    = (cond.indexOf("rain") !== -1) ||   // Rain / Heavy rain
+                     (cond.indexOf("drizzle") !== -1) ||
+                     (cond.indexOf("thunder") !== -1);
+    var isNight    = (hour >= 21 || hour < 6);
+    var isMorning  = (hour >= 6 && hour < 11);
+    var isClearish = (cond === "clear" || cond === "partly cloudy");
+
+    if (isRainy)                 return AMBIENCE_TRACKS.rain;       // 1
+    if (wind >= WIND_VERY_KMH)   return AMBIENCE_TRACKS.veryWindy;  // 2
+    if (wind >= WIND_MOD_KMH)    return AMBIENCE_TRACKS.windy;      // 3
+    if (isNight)                 return AMBIENCE_TRACKS.night;      // 4
+    if (isMorning && isClearish) return AMBIENCE_TRACKS.morning;    // 5
+    if (cond === "clear")        return AMBIENCE_TRACKS.clearDay;   // 6
+    return AMBIENCE_TRACKS.calm;                                    // 7 (default)
+  }
+
+  /* localStorage wrapped in try/catch — some WebViews throw when it's disabled. */
+  function getAmbiencePref() {
+    try { return window.localStorage ? localStorage.getItem(AMBIENCE_PREF_KEY) : null; }
+    catch (e) { return null; }
+  }
+  function setAmbiencePref(v) {
+    try { if (window.localStorage) localStorage.setItem(AMBIENCE_PREF_KEY, v); }
+    catch (e) { /* ignore — ambience still works for this session */ }
+  }
+
+  /* Keep the corner button label matching reality. */
+  function updateSoundButton() {
+    var btn = $("soundToggle");
+    if (!btn || !ambienceEl) return;
+    var playing = !ambienceEl.paused && currentTrack;
+    btn.textContent = playing ? "Mute" : "Enable Sound";
+  }
+
+  /* Try to start playback at low volume. The browser may refuse (autoplay
+     policy); either way we update the button to show the true state. */
+  function tryPlayAmbience() {
+    if (!ambienceEl || !currentTrack) return;
+    ambienceEl.volume = AMBIENCE_VOLUME;
+    var p = ambienceEl.play();
+    if (p && p.then) {
+      p.then(function () { updateSoundButton(); })
+       .catch(function (e) {
+         // Most common case: autoplay blocked until a real tap.
+         console.warn("Ambience play blocked:", e && e.message);
+         updateSoundButton();
+       });
+    } else {
+      // Very old WebView: play() returns undefined — assume it started.
+      updateSoundButton();
+    }
+  }
+
+  /* Pick the right track for the current weather/time, switch to it if it
+     changed, and play it unless the user has muted. Called after each weather
+     load (so weather changes AND day/night changes are picked up every refresh). */
+  function applyAmbience() {
+    if (!ambienceEl) return;
+
+    var file = pickAmbienceTrack(lastWeather, new Date());
+
+    // Only swap the source when the track actually changes, so an unchanged
+    // track keeps looping smoothly instead of restarting harshly.
+    if (file !== currentTrack) {
+      currentTrack = file;
+      ambienceEl.src = AMBIENCE_DIR + file;
+    }
+
+    // "0" means the user explicitly muted — respect it and stay silent.
+    if (getAmbiencePref() !== "0") {
+      tryPlayAmbience();
+    } else {
+      updateSoundButton();
+    }
+  }
+
+  /* Corner button tap: toggle sound. A tap is a user gesture, so play() is
+     allowed even when earlier autoplay was blocked. */
+  function onSoundToggle() {
+    if (!ambienceEl) return;
+    var playing = !ambienceEl.paused && currentTrack;
+    if (playing) {
+      ambienceEl.pause();
+      setAmbiencePref("0");      // remember: muted
+      updateSoundButton();
+    } else {
+      setAmbiencePref("1");      // remember: on
+      if (!currentTrack) applyAmbience(); // make sure a track is loaded + playing
+      else tryPlayAmbience();
+    }
   }
 
   /* ---------- Scale-to-fit (use the LAYOUT viewport) ----------
@@ -467,6 +600,13 @@
     tickClock();
     setInterval(tickClock, 1000);
 
+    // Weather ambience: grab the <audio> element and wire the corner button
+    // BEFORE the first weather load, so applyAmbience() has them ready.
+    ambienceEl = $("ambience");
+    var soundBtn = $("soundToggle");
+    if (soundBtn) soundBtn.addEventListener("click", onSoundToggle, false);
+    updateSoundButton();   // set the initial button label
+
     loadAndRender(true);
     loadWeather();
     refreshTimer = setInterval(function () {
@@ -480,22 +620,6 @@
       if (rotateTimer) clearInterval(rotateTimer);
       rotateTimer = setInterval(advance, ROTATE_MS);
     }, false);
-
-    // test audio button (temporary proof-of-audio test)
-    var testBtn = $("testAudioBtn");
-    if (testBtn) {
-      testBtn.addEventListener("click", function () {
-        var audio = $("testAudio");
-        if (!audio) {
-          console.warn("Test audio element not found");
-          return;
-        }
-        audio.volume = 0.3;
-        audio.play().catch(function (e) {
-          console.warn("Audio playback failed:", e.message);
-        });
-      }, false);
-    }
   }
 
   if (document.readyState === "loading") {

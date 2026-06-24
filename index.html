@@ -133,11 +133,13 @@
       </div>
     </footer>
 
-    <!-- Test Audio: temporary button for proof-of-audio test -->
-    <button id="testAudioBtn" style="position: fixed; top: 12px; right: 12px; z-index: 9999; padding: 8px 12px; font-size: 12px; background: #d8a44a; color: #0b110f; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">Test Audio</button>
-    <audio id="testAudio" preload="none">
-      <source src="assets/audio/bird.mp3" type="audio/mpeg">
-    </audio>
+    <!-- Weather ambience (V1): one looping background track, auto-picked from the
+         live weather + local time. The corner button is a manual fallback for
+         browsers/Fully Kiosk that block autoplay until the page is tapped.
+         To remove the feature later: delete these two lines + the
+         "Weather ambience" section in app.js. -->
+    <button id="soundToggle" style="position: fixed; top: 12px; right: 12px; z-index: 9999; padding: 6px 10px; font-size: 11px; background: #d8a44a; color: #0b110f; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">Enable Sound</button>
+    <audio id="ambience" loop preload="none"></audio>
   </div>
   <script src="app.js"></script>
 </body>
