@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en-IE">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=1280, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="format-detection" content="telephone=no">
+  <title>Éire Daily — News &amp; Weather</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="dash" id="fit">
+
+    <!-- ===== Top bar: clock / date / brand / last-updated ===== -->
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark"></span>
+        <span class="brand-name">Éire&nbsp;Daily</span>
+        <span class="brand-sub">News &amp; Weather</span>
+      </div>
+      <div class="clock">
+        <div class="clock-time" id="clockTime">--:--</div>
+        <div class="clock-date" id="clockDate">&nbsp;</div>
+      </div>
+    </header>
+
+    <!-- ===== Main row: hero news card + side column ===== -->
+    <main class="stage">
+
+      <!-- Hero rotating card -->
+      <section class="hero" id="hero" aria-live="polite">
+        <div class="hero-progress"><span class="hero-progress-fill" id="heroFill"></span></div>
+
+        <div class="hero-media" id="heroMedia">
+          <div class="hero-media-img" id="heroImg"></div>
+          <div class="hero-media-scrim"></div>
+          <div class="hero-media-fallback" id="heroFallback">
+            <span class="fallback-glyph" id="fallbackGlyph"></span>
+            <span class="fallback-label">No image</span>
+          </div>
+        </div>
+
+        <div class="hero-body">
+          <div class="hero-meta">
+            <span class="badge" id="heroBadge">Source</span>
+            <span class="hero-time" id="heroTime">just now</span>
+          </div>
+          <h1 class="hero-title" id="heroTitle">Loading headlines…</h1>
+          <p class="hero-summary" id="heroSummary"></p>
+          <div class="hero-dots" id="heroDots"></div>
+        </div>
+      </section>
+
+      <!-- Side column: up next -->
+      <aside class="side">
+        <div class="side-head">
+          <span class="side-title">Up Next</span>
+          <span class="side-count" id="sideCount"></span>
+        </div>
+        <ul class="upnext" id="upnext"></ul>
+      </aside>
+    </main>
+
+    <!-- ===== Bottom strip: weather placeholder + status ===== -->
+    <footer class="strip">
+      <div class="strip-card weather" id="weatherCard">
+        <div class="weather-icon"><span class="weather-icon-cloud"></span></div>
+        <div class="weather-text">
+          <span class="weather-temp">Weather</span>
+          <span class="weather-label">Live forecast arriving in V2</span>
+        </div>
+      </div>
+
+      <div class="strip-card status">
+        <span class="dot-live" id="liveDot"></span>
+        <span class="status-text" id="rotationStatus">Rotating headlines</span>
+      </div>
+
+      <div class="strip-card updated">
+        <span class="updated-label">Last updated</span>
+        <span class="updated-time" id="updatedTime">—</span>
+      </div>
+    </footer>
+
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

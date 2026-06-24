@@ -1,0 +1,462 @@
+/* ===== Éire Daily — countertop news dashboard =====
+   Target: Lenovo Yoga Tab 3 8" — 1280x800 landscape, OLD Android WebView.
+   Max-compatibility build:
+     - No oklch(), no CSS custom properties (var) — plain hex/rgba only.
+     - -webkit- prefixes for flex / transform / transition / box-orient.
+     - No backdrop-filter, no blur, no filter, cheap opacity-only animations.
+     - System font fallbacks if Google Fonts fail to load.
+     - JS scale-to-fit keeps the 1280x800 canvas whole even when the
+       browser's chrome eats vertical space. */
+
+* { margin: 0; padding: 0; -webkit-box-sizing: border-box; box-sizing: border-box; }
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #0b110f;
+  color: #eef3f0;
+  font-family: "IBM Plex Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  -webkit-tap-highlight-color: rgba(0,0,0,0);
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+/* centre the fixed canvas; scaled down by JS if the viewport is smaller */
+body {
+  display: -webkit-box;
+  display: -webkit-flex;
+  display: flex;
+  -webkit-box-pack: center;
+  -webkit-justify-content: center;
+  justify-content: center;
+  -webkit-box-align: center;
+  -webkit-align-items: center;
+  align-items: center;
+  background-color: #0b110f;
+  background-image:
+    radial-gradient(900px 600px at 18% -10%, rgba(60,140,100,0.10), rgba(11,17,15,0) 60%),
+    radial-gradient(700px 500px at 110% 120%, rgba(200,150,70,0.07), rgba(11,17,15,0) 55%);
+  background-repeat: no-repeat;
+}
+
+/* ===================== Fixed canvas ===================== */
+.dash {
+  width: 1280px;
+  height: 800px;
+  padding: 22px 26px 24px;
+  -webkit-transform-origin: center center;
+  transform-origin: center center;
+  display: -webkit-box;
+  display: -webkit-flex;
+  display: flex;
+  -webkit-box-orient: vertical;
+  -webkit-box-direction: normal;
+  -webkit-flex-direction: column;
+  flex-direction: column;
+}
+.dash > * { -webkit-flex-shrink: 0; }
+
+/* ===================== Top bar ===================== */
+.topbar {
+  height: 64px;
+  -webkit-flex: 0 0 64px;
+  flex: 0 0 64px;
+  display: -webkit-flex;
+  display: flex;
+  -webkit-align-items: center;
+  align-items: center;
+  -webkit-justify-content: space-between;
+  justify-content: space-between;
+  padding: 0 6px;
+  margin-bottom: 18px;
+}
+.brand {
+  display: -webkit-flex;
+  display: flex;
+  -webkit-align-items: baseline;
+  align-items: baseline;
+}
+.brand > * { margin-right: 12px; }
+.brand-mark {
+  width: 14px; height: 14px; border-radius: 4px;
+  -webkit-align-self: center;
+  align-self: center;
+  background-color: #3f9d6b;
+  background-image: -webkit-linear-gradient(315deg, #4fb583, #2f7d56);
+  background-image: linear-gradient(135deg, #4fb583, #2f7d56);
+  box-shadow: 0 0 18px rgba(70,180,120,0.45);
+}
+.brand-name {
+  font-family: "Newsreader", Georgia, "Times New Roman", serif;
+  font-size: 30px; font-weight: 600; letter-spacing: 0.3px;
+}
+.brand-sub {
+  font-size: 13px; letter-spacing: 2px; text-transform: uppercase;
+  color: #6f8079; font-weight: 600;
+}
+.clock { text-align: right; line-height: 1; }
+.clock-time {
+  font-family: "IBM Plex Mono", "Courier New", monospace;
+  font-size: 38px; font-weight: 500; letter-spacing: 1px;
+}
+.clock-date {
+  font-size: 15px; color: #9fb0a8; font-weight: 500;
+  margin-top: 5px; letter-spacing: 0.3px;
+}
+
+/* ===================== Stage ===================== */
+.stage {
+  -webkit-box-flex: 1;
+  -webkit-flex: 1 1 auto;
+  flex: 1 1 auto;
+  display: -webkit-flex;
+  display: flex;
+  min-height: 0;
+  margin-bottom: 18px;
+}
+.stage > * { min-height: 0; }
+
+/* ---------- Hero card ---------- */
+.hero {
+  -webkit-box-flex: 1;
+  -webkit-flex: 1 1 auto;
+  flex: 1 1 auto;
+  position: relative;
+  background-color: #141d19;
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 20px;
+  overflow: hidden;
+  display: -webkit-flex;
+  display: flex;
+  -webkit-flex-direction: column;
+  flex-direction: column;
+  margin-right: 18px;
+}
+.hero-progress {
+  position: absolute; top: 0; left: 0; right: 0; height: 4px;
+  background-color: rgba(255,255,255,0.06); z-index: 4;
+}
+.hero-progress-fill {
+  display: block; height: 100%; width: 0;
+  background-color: #4fb583;
+  background-image: -webkit-linear-gradient(left, #4fb583, #d8a44a);
+  background-image: linear-gradient(90deg, #4fb583, #d8a44a);
+}
+
+.hero-media {
+  position: relative;
+  height: 256px;
+  -webkit-flex: 0 0 256px;
+  flex: 0 0 256px;
+  background-color: #1a2620;
+}
+.hero-media-img {
+  position: absolute; top: 0; right: 0; bottom: 0; left: 0;
+  background-size: cover;
+  background-position: center center;
+  background-repeat: no-repeat;
+}
+.hero-media-scrim {
+  /* gradient scrim, as a real element (avoids ::after edge cases on old WebView) */
+  position: absolute; left: 0; right: 0; bottom: 0; height: 120px; z-index: 2;
+  background-image: -webkit-linear-gradient(bottom, #141d19, rgba(20,29,25,0));
+  background-image: linear-gradient(to top, #141d19, rgba(20,29,25,0));
+}
+.hero-media-fallback {
+  position: absolute; top: 0; right: 0; bottom: 0; left: 0;
+  display: none;
+  -webkit-flex-direction: column;
+  flex-direction: column;
+  -webkit-align-items: center;
+  align-items: center;
+  -webkit-justify-content: center;
+  justify-content: center;
+  background-color: #1a2620;
+  background-image:
+    repeating-linear-gradient(135deg, rgba(255,255,255,0.025) 0, rgba(255,255,255,0.025) 14px, rgba(255,255,255,0) 14px, rgba(255,255,255,0) 28px),
+    radial-gradient(500px 300px at 50% 30%, rgba(70,150,110,0.12), rgba(26,38,32,0) 70%);
+}
+.hero.no-image .hero-media-img { display: none; }
+.hero.no-image .hero-media-scrim { display: none; }
+.hero.no-image .hero-media-fallback {
+  display: -webkit-flex;
+  display: flex;
+}
+.fallback-glyph {
+  font-family: "Newsreader", Georgia, "Times New Roman", serif;
+  font-size: 92px; font-weight: 600; line-height: 1;
+  color: #eef3f0; opacity: 0.85;
+  margin-bottom: 14px;
+}
+.fallback-label {
+  font-family: "IBM Plex Mono", "Courier New", monospace;
+  font-size: 13px; letter-spacing: 2px; text-transform: uppercase;
+  color: #6f8079;
+}
+
+.hero-body {
+  -webkit-box-flex: 1;
+  -webkit-flex: 1 1 auto;
+  flex: 1 1 auto;
+  padding: 26px 36px 30px;
+  display: -webkit-flex;
+  display: flex;
+  -webkit-flex-direction: column;
+  flex-direction: column;
+  min-height: 0;
+}
+.hero-meta {
+  display: -webkit-flex;
+  display: flex;
+  -webkit-align-items: center;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.hero-meta > * { margin-right: 16px; }
+.hero-time {
+  font-family: "IBM Plex Mono", "Courier New", monospace;
+  font-size: 16px; color: #9fb0a8; letter-spacing: 0.5px;
+}
+.hero-title {
+  font-family: "Newsreader", Georgia, "Times New Roman", serif;
+  font-weight: 600;
+  font-size: 42px;
+  line-height: 1.1;
+  letter-spacing: -0.4px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.hero-summary {
+  margin-top: 14px;
+  font-size: 21px;
+  line-height: 1.42;
+  color: #9fb0a8;
+  font-weight: 400;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.hero-dots {
+  margin-top: auto;
+  padding-top: 22px;
+  display: -webkit-flex;
+  display: flex;
+  -webkit-align-items: center;
+  align-items: center;
+}
+.hero-dots i {
+  display: block; height: 6px; width: 26px; border-radius: 6px;
+  background-color: rgba(255,255,255,0.14);
+  margin-right: 9px;
+}
+.hero-dots i.on { background-color: #4fb583; width: 42px; }
+
+/* ---------- Side column ---------- */
+.side {
+  -webkit-flex: 0 0 364px;
+  flex: 0 0 364px;
+  width: 364px;
+  background-color: #141d19;
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 20px;
+  padding: 22px 20px;
+  display: -webkit-flex;
+  display: flex;
+  -webkit-flex-direction: column;
+  flex-direction: column;
+}
+.side-head {
+  display: -webkit-flex;
+  display: flex;
+  -webkit-align-items: baseline;
+  align-items: baseline;
+  -webkit-justify-content: space-between;
+  justify-content: space-between;
+  padding: 0 6px 14px;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+}
+.side-title {
+  font-size: 13px; letter-spacing: 2.5px; text-transform: uppercase;
+  color: #9fb0a8; font-weight: 700;
+}
+.side-count {
+  font-family: "IBM Plex Mono", "Courier New", monospace;
+  font-size: 14px; color: #6f8079;
+}
+.upnext {
+  list-style: none;
+  -webkit-box-flex: 1;
+  -webkit-flex: 1 1 auto;
+  flex: 1 1 auto;
+  display: -webkit-flex;
+  display: flex;
+  -webkit-flex-direction: column;
+  flex-direction: column;
+}
+.upnext li {
+  display: -webkit-flex;
+  display: flex;
+  -webkit-align-items: flex-start;
+  align-items: flex-start;
+  padding: 16px 6px;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+}
+.upnext li:last-child { border-bottom: none; }
+.up-rail {
+  -webkit-flex: 0 0 4px;
+  flex: 0 0 4px;
+  -webkit-align-self: stretch;
+  align-self: stretch;
+  border-radius: 4px;
+  background-color: rgba(255,255,255,0.12);
+  margin-right: 14px;
+}
+.up-body { min-width: 0; }
+.up-src {
+  font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase;
+  font-weight: 700; margin-bottom: 5px;
+}
+.up-title {
+  font-size: 18px; line-height: 1.28; color: #eef3f0;
+  font-weight: 500;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.upnext li.current {
+  background-color: rgba(255,255,255,0.025);
+  border-radius: 12px;
+}
+.upnext li.current .up-rail {
+  background-color: #4fb583;
+  background-image: -webkit-linear-gradient(top, #4fb583, #2f7d56);
+  background-image: linear-gradient(#4fb583, #2f7d56);
+}
+.upnext li.current .up-title { color: #ffffff; }
+
+/* ===================== Bottom strip ===================== */
+.strip {
+  -webkit-flex: 0 0 118px;
+  flex: 0 0 118px;
+  height: 118px;
+  display: -webkit-flex;
+  display: flex;
+}
+.strip > * { margin-right: 18px; }
+.strip > *:last-child { margin-right: 0; }
+.strip-card {
+  background-color: #141d19;
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 20px;
+  display: -webkit-flex;
+  display: flex;
+  -webkit-align-items: center;
+  align-items: center;
+  padding: 0 26px;
+}
+.weather {
+  -webkit-box-flex: 1;
+  -webkit-flex: 1 1 auto;
+  flex: 1 1 auto;
+}
+.weather-icon {
+  width: 58px; height: 58px; border-radius: 16px;
+  background-color: #d8a44a;
+  background-image: radial-gradient(circle at 35% 35%, #d8a44a, #c47b30);
+  box-shadow: 0 0 26px rgba(220,170,90,0.25);
+  -webkit-flex: 0 0 58px;
+  flex: 0 0 58px;
+  position: relative;
+  margin-right: 22px;
+}
+.weather-icon-cloud {
+  position: absolute; right: -6px; bottom: -2px;
+  width: 34px; height: 20px; border-radius: 12px;
+  background-color: rgba(230,238,234,0.85);
+  box-shadow: -10px 0 0 -2px rgba(230,238,234,0.85);
+}
+.weather-text {
+  display: -webkit-flex;
+  display: flex;
+  -webkit-flex-direction: column;
+  flex-direction: column;
+}
+.weather-temp {
+  font-family: "Newsreader", Georgia, "Times New Roman", serif;
+  font-size: 26px; font-weight: 600; margin-bottom: 6px;
+}
+.weather-label {
+  font-family: "IBM Plex Mono", "Courier New", monospace;
+  font-size: 14px; color: #6f8079; letter-spacing: 0.5px;
+}
+
+.status {
+  -webkit-flex: 0 0 320px;
+  flex: 0 0 320px;
+}
+.dot-live {
+  width: 14px; height: 14px; border-radius: 50%;
+  background-color: #4fb583;
+  -webkit-flex: 0 0 14px;
+  flex: 0 0 14px;
+  margin-right: 14px;
+  -webkit-animation: pulse 2.2s ease-in-out infinite;
+  animation: pulse 2.2s ease-in-out infinite;
+}
+@-webkit-keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+.status-text { font-size: 19px; color: #9fb0a8; font-weight: 500; }
+
+.updated {
+  -webkit-flex: 0 0 300px;
+  flex: 0 0 300px;
+  -webkit-flex-direction: column;
+  flex-direction: column;
+  -webkit-align-items: flex-start;
+  align-items: flex-start;
+  -webkit-justify-content: center;
+  justify-content: center;
+}
+.updated-label {
+  font-size: 12px; letter-spacing: 2px; text-transform: uppercase;
+  color: #6f8079; font-weight: 700; margin-bottom: 6px;
+}
+.updated-time {
+  font-family: "IBM Plex Mono", "Courier New", monospace;
+  font-size: 24px; color: #eef3f0; letter-spacing: 0.5px;
+}
+
+/* ===================== Badges ===================== */
+.badge {
+  font-size: 14px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase;
+  padding: 7px 14px; border-radius: 999px;
+  color: #0b110f;
+  background-color: #9fb0a8;
+  white-space: nowrap;
+}
+.badge.src-rte     { background-color: #4fb583; }
+.badge.src-journal { background-color: #5a9fdb; }
+.badge.src-dublin  { background-color: #d8a44a; }
+.badge.src-default { background-color: #9fb0a8; }
+
+.up-src.src-rte     { color: #4fb583; }
+.up-src.src-journal { color: #5a9fdb; }
+.up-src.src-dublin  { color: #d8a44a; }
+.up-src.src-default { color: #9fb0a8; }
+
+/* ===================== Card swap (opacity only — cheap) ===================== */
+.hero-body, .hero-media-img, .hero-media-fallback {
+  opacity: 1;
+  -webkit-transition: opacity 360ms ease;
+  transition: opacity 360ms ease;
+}
+.hero.swapping .hero-body,
+.hero.swapping .hero-media-img,
+.hero.swapping .hero-media-fallback { opacity: 0; }
