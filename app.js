@@ -16,7 +16,6 @@
   var AMBIENCE_VOLUME   = 0.3;             // low, calm background level
   var WIND_VERY_KMH     = 35;              // "very windy" threshold
   var WIND_MOD_KMH      = 20;              // "windy" threshold
-  var AMBIENCE_PREF_KEY = "eireAmbiencePref"; // localStorage: "1" on, "0" muted
   // Which MP3 plays for each weather/time situation.
   var AMBIENCE_TRACKS = {
     rain:      "rain.mp3",          // any rain / drizzle / thunder
@@ -395,14 +394,15 @@
      condition + the tablet's local time. No layering, no extra APIs — it just
      reuses the /api/weather data we already fetch for the weather card.
 
-     Autoplay note: browsers (and Fully Kiosk) may block audio until the user
-     has tapped the page. So we *try* to play automatically; if that's blocked,
-     the "Enable Sound" button stays visible for a manual start. The user's
-     on/off choice is saved in localStorage and re-tried on the next load. */
+     No on-screen control: the sound simply autoplays at low volume. On Fully
+     Kiosk autoplay is allowed, so it just works. As a safety net for ordinary
+     browsers that block autoplay until a gesture, the first tap/touch/key
+     anywhere on the page starts it. Adjust/silence with the tablet's volume. */
 
-  var ambienceEl   = null;   // the <audio> element (assigned in init)
-  var currentTrack = "";     // filename currently loaded, so we don't restart it
-  var lastWeather  = null;   // most recent weather object, for re-picks on refresh
+  var ambienceEl    = null;   // the <audio> element (assigned in init)
+  var currentTrack  = "";     // filename currently loaded, so we don't restart it
+  var lastWeather   = null;   // most recent weather object, for re-picks on refresh
+  var audioUnlocked = false;  // true once playback has actually started
 
   /* Decide which track fits the weather + time. First match wins (priority). */
   function pickAmbienceTrack(weather, date) {
@@ -428,46 +428,49 @@
     return AMBIENCE_TRACKS.calm;                                    // 7 (default)
   }
 
-  /* localStorage wrapped in try/catch — some WebViews throw when it's disabled. */
-  function getAmbiencePref() {
-    try { return window.localStorage ? localStorage.getItem(AMBIENCE_PREF_KEY) : null; }
-    catch (e) { return null; }
-  }
-  function setAmbiencePref(v) {
-    try { if (window.localStorage) localStorage.setItem(AMBIENCE_PREF_KEY, v); }
-    catch (e) { /* ignore — ambience still works for this session */ }
-  }
-
-  /* Keep the corner button label matching reality. */
-  function updateSoundButton() {
-    var btn = $("soundToggle");
-    if (!btn || !ambienceEl) return;
-    var playing = !ambienceEl.paused && currentTrack;
-    btn.textContent = playing ? "Mute" : "Enable Sound";
-  }
-
   /* Try to start playback at low volume. The browser may refuse (autoplay
-     policy); either way we update the button to show the true state. */
+     policy); if so, the gesture fallback below will start it on the first tap. */
   function tryPlayAmbience() {
     if (!ambienceEl || !currentTrack) return;
     ambienceEl.volume = AMBIENCE_VOLUME;
     var p = ambienceEl.play();
     if (p && p.then) {
-      p.then(function () { updateSoundButton(); })
-       .catch(function (e) {
-         // Most common case: autoplay blocked until a real tap.
-         console.warn("Ambience play blocked:", e && e.message);
-         updateSoundButton();
-       });
+      p.then(function () {
+        audioUnlocked = true;
+        removeGestureUnlock();   // playing now, stop listening for a gesture
+      }).catch(function (e) {
+        // Most common case: autoplay blocked until a real tap. Stay quiet;
+        // the gesture fallback (still attached) will start it on first touch.
+        console.warn("Ambience autoplay blocked; will start on first tap:", e && e.message);
+      });
     } else {
       // Very old WebView: play() returns undefined — assume it started.
-      updateSoundButton();
+      audioUnlocked = true;
+      removeGestureUnlock();
     }
   }
 
+  /* Gesture fallback: if autoplay was blocked, the first interaction anywhere
+     counts as the user gesture browsers require, so we retry play() then. */
+  function gestureUnlock() {
+    if (!audioUnlocked) tryPlayAmbience();
+  }
+  function addGestureUnlock() {
+    if (!document.addEventListener) return;
+    document.addEventListener("click", gestureUnlock, true);
+    document.addEventListener("touchstart", gestureUnlock, true);
+    document.addEventListener("keydown", gestureUnlock, true);
+  }
+  function removeGestureUnlock() {
+    if (!document.removeEventListener) return;
+    document.removeEventListener("click", gestureUnlock, true);
+    document.removeEventListener("touchstart", gestureUnlock, true);
+    document.removeEventListener("keydown", gestureUnlock, true);
+  }
+
   /* Pick the right track for the current weather/time, switch to it if it
-     changed, and play it unless the user has muted. Called after each weather
-     load (so weather changes AND day/night changes are picked up every refresh). */
+     changed, and (try to) play it. Called after each weather load, so weather
+     changes AND day/night changes are picked up on every 5-minute refresh. */
   function applyAmbience() {
     if (!ambienceEl) return;
 
@@ -480,28 +483,7 @@
       ambienceEl.src = AMBIENCE_DIR + file;
     }
 
-    // "0" means the user explicitly muted — respect it and stay silent.
-    if (getAmbiencePref() !== "0") {
-      tryPlayAmbience();
-    } else {
-      updateSoundButton();
-    }
-  }
-
-  /* Corner button tap: toggle sound. A tap is a user gesture, so play() is
-     allowed even when earlier autoplay was blocked. */
-  function onSoundToggle() {
-    if (!ambienceEl) return;
-    var playing = !ambienceEl.paused && currentTrack;
-    if (playing) {
-      ambienceEl.pause();
-      setAmbiencePref("0");      // remember: muted
-      updateSoundButton();
-    } else {
-      setAmbiencePref("1");      // remember: on
-      if (!currentTrack) applyAmbience(); // make sure a track is loaded + playing
-      else tryPlayAmbience();
-    }
+    tryPlayAmbience();
   }
 
   /* ---------- Scale-to-fit (use the LAYOUT viewport) ----------
@@ -600,12 +582,10 @@
     tickClock();
     setInterval(tickClock, 1000);
 
-    // Weather ambience: grab the <audio> element and wire the corner button
-    // BEFORE the first weather load, so applyAmbience() has them ready.
+    // Weather ambience: grab the <audio> element and arm the gesture fallback
+    // BEFORE the first weather load, so applyAmbience() is ready to play.
     ambienceEl = $("ambience");
-    var soundBtn = $("soundToggle");
-    if (soundBtn) soundBtn.addEventListener("click", onSoundToggle, false);
-    updateSoundButton();   // set the initial button label
+    addGestureUnlock();
 
     loadAndRender(true);
     loadWeather();
