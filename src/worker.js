@@ -29,6 +29,11 @@
 // `limit` = how many of each feed's items to keep BEFORE merging.
 const FEEDS = [
   { source: "RTÉ News",    url: "https://www.rte.ie/feeds/rss/?index=/news/&limit=100", limit: 10 },
+  // Extra RTÉ sections to widen the pool. Same "RTÉ News" badge so they share the
+  // src-rte styling on the frontend; merge+sort+dedupe-by-URL handles any overlap
+  // with the main /news/ feed. Both verified 100% media:content image coverage.
+  { source: "RTÉ News",    url: "https://www.rte.ie/feeds/rss/?index=/news/business/&limit=100",   limit: 5 },
+  { source: "RTÉ News",    url: "https://www.rte.ie/feeds/rss/?index=/news/technology/&limit=100", limit: 5 },
   { source: "TheJournal",  url: "https://www.thejournal.ie/feed/",                       limit: 10 },
   // Dublin-local only. We deliberately do NOT also pull /news/ — it overlaps
   // heavily with this feed and would create duplicates.
@@ -48,6 +53,51 @@ const WEATHER_URL =
   "&current=temperature_2m,precipitation,weather_code,wind_speed_10m" +
   "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max" +
   "&timezone=Europe%2FDublin";
+
+/* ---------- "The State of It" — AI news-mood (Gemini) ----------
+   A lightweight classify-only feature. The Worker (never the browser) asks
+   Gemini to label the top stories, then the Worker does the maths and returns
+   a small mood object. The API key lives ONLY in env.GEMINI_API_KEY (a
+   Cloudflare secret in prod / .dev.vars locally) — never in code or the frontend.
+   If the key is missing or Gemini fails, /api/mood returns { available:false }
+   and the dashboard simply hides the gauge. */
+const MOOD_MODEL = "gemini-3.1-flash-lite";  // change here if you switch models
+const MOOD_API_URL =
+  "https://generativelanguage.googleapis.com/v1beta/models/" + MOOD_MODEL + ":generateContent";
+const MOOD_CACHE_SECONDS = 3 * 60 * 60;   // reuse a computed mood for ~3 hours
+const MOOD_FAIL_CACHE_SECONDS = 30 * 60;  // after a failure, wait ~30 min before retrying Gemini
+const MOOD_STORY_COUNT = 24;              // analyse up to the top 24 stories
+const MOOD_SUMMARY_MAX = 160;             // trim each summary we send to Gemini (less data)
+const MOOD_TIMEOUT_MS = 20000;            // give Gemini up to 20s, then fall back quietly
+
+// Allowed values mirrored in the prompt. Topic list matches the frontend legend.
+const MOOD_TOPICS = ["politics","crime","economy","housing","transport","weather","world","local","sport","culture","other"];
+
+// Strict JSON contract for Gemini (OpenAPI subset). responseMimeType + this
+// schema force the model to return exactly this shape — no prose, no markdown.
+const MOOD_SCHEMA = {
+  type: "object",
+  properties: {
+    stories: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          i:              { type: "integer" },
+          sentiment:      { type: "string", enum: ["positive", "neutral", "negative"] },
+          sentimentScore: { type: "integer" },
+          severity:       { type: "string", enum: ["light", "normal", "serious", "heavy"] },
+          severityScore:  { type: "integer" },
+          topic:          { type: "string", enum: MOOD_TOPICS },
+          confidence:     { type: "number" }
+        },
+        required: ["i", "sentiment", "sentimentScore", "severity", "severityScore", "topic", "confidence"],
+        propertyOrdering: ["i", "sentiment", "sentimentScore", "severity", "severityScore", "topic", "confidence"]
+      }
+    }
+  },
+  required: ["stories"]
+};
 
 /* ---------- Entry point ---------- */
 export default {
@@ -77,6 +127,13 @@ export default {
       return handleWeather(request, ctx);
     }
 
+    if (url.pathname === "/api/mood") {
+      if (request.method !== "GET") {
+        return json({ error: "Method not allowed" }, 405);
+      }
+      return handleMood(request, env, ctx);
+    }
+
     // Not an API route -> let the static asset server handle it.
     if (env.ASSETS) return env.ASSETS.fetch(request);
     return new Response("Not found", { status: 404 });
@@ -95,7 +152,30 @@ async function handleNews(request, ctx) {
   const hit = await cache.match(cacheKey);
   if (hit) return hit;
 
-  // --- 2. Fetch all feeds in parallel; one failure must not sink the rest --
+  // --- 2. Build the merged, sorted, de-duped item list --------------------
+  const { items, okCount } = await buildNewsItems();
+
+  // --- 3. All feeds down -> 502 (do NOT cache this) ------------------------
+  if (okCount === 0) {
+    return json(
+      { error: "All news feeds failed", items: [], updatedAt: new Date().toISOString() },
+      502
+    );
+  }
+
+  // --- 4. Build response + store in the edge cache for 10 minutes ----------
+  const payload = { items, updatedAt: new Date().toISOString() };
+  const response = json(payload, 200, {
+    "Cache-Control": `public, max-age=${CACHE_SECONDS}`
+  });
+  // cache.put must not block the response, so do it in the background.
+  ctx.waitUntil(cache.put(cacheKey, response.clone()));
+  return response;
+}
+
+/* Fetch all feeds in parallel, merge, sort newest-first, de-dupe by URL.
+   One failing feed must not sink the rest. Shared by /api/news and /api/mood. */
+async function buildNewsItems() {
   const settled = await Promise.allSettled(FEEDS.map(fetchFeed));
 
   let items = [];
@@ -110,26 +190,31 @@ async function handleNews(request, ctx) {
     }
   });
 
-  // --- 3. All feeds down -> 502 (do NOT cache this) ------------------------
-  if (okCount === 0) {
-    return json(
-      { error: "All news feeds failed", items: [], updatedAt: new Date().toISOString() },
-      502
-    );
-  }
+  if (okCount === 0) return { items: [], okCount: 0 };
 
-  // --- 4. Sort newest-first, then de-dupe by article URL ------------------
   items.sort((a, b) => dateValue(b.published) - dateValue(a.published));
   items = dedupeByUrl(items);
+  return { items, okCount };
+}
 
-  // --- 5. Build response + store in the edge cache for 10 minutes ----------
-  const payload = { items, updatedAt: new Date().toISOString() };
-  const response = json(payload, 200, {
-    "Cache-Control": `public, max-age=${CACHE_SECONDS}`
-  });
-  // cache.put must not block the response, so do it in the background.
-  ctx.waitUntil(cache.put(cacheKey, response.clone()));
-  return response;
+/* Get the current news items for analysis. Prefers the already-cached
+   /api/news payload (the frontend loads it too, so it's usually warm) and only
+   rebuilds from the live feeds on a cache miss — so the mood feature does not
+   add an extra round of feed fetches in the common case. */
+async function getNewsItems(request) {
+  const cache = caches.default;
+  const cacheKey = new Request(new URL("/api/news", request.url).toString(), { method: "GET" });
+  const hit = await cache.match(cacheKey);
+  if (hit) {
+    try {
+      const data = await hit.json();
+      if (data && Array.isArray(data.items) && data.items.length) return data.items;
+    } catch (e) {
+      /* fall through to a fresh build */
+    }
+  }
+  const built = await buildNewsItems();
+  return built.items;
 }
 
 /* ============================================================
@@ -261,6 +346,245 @@ function isNumber(value) {
 
 function round1(value) {
   return Math.round(value * 10) / 10;
+}
+
+/* ============================================================
+   /api/mood  —  "The State of It" AI news mood
+   ------------------------------------------------------------
+   Debug flags (query string):
+     ?refresh=1  -> skip the cache and recompute now (test without waiting 3h)
+     ?debug=1    -> also include the raw per-story classifications
+   ============================================================ */
+async function handleMood(request, env, ctx) {
+  const url = new URL(request.url);
+  const force = url.searchParams.get("refresh") === "1";
+  const debug = url.searchParams.get("debug") === "1";
+
+  const cache = caches.default;
+  const cacheKey = new Request(new URL("/api/mood", request.url).toString(), { method: "GET" });
+
+  // 1) Serve a fresh cached mood unless a manual refresh was requested. This is
+  //    what keeps Gemini from being called on every page poll — once computed,
+  //    the same mood is reused for MOOD_CACHE_SECONDS (~3h).
+  if (!force) {
+    const hit = await cache.match(cacheKey);
+    if (hit) return hit;
+  }
+
+  // 2) No key configured -> the dashboard works normally, the gauge just hides.
+  //    Not cached, so it starts working immediately once a key is added.
+  const apiKey = env && env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return json({ available: false, reason: "no_key", updatedAt: new Date().toISOString() });
+  }
+
+  try {
+    const items = await getNewsItems(request);
+    const top = (items || []).slice(0, MOOD_STORY_COUNT);
+    if (top.length < 3) {
+      return json({ available: false, reason: "not_enough_news", updatedAt: new Date().toISOString() });
+    }
+
+    const classifications = await classifyWithGemini(top, apiKey);
+    const mood = aggregateMood(classifications);
+    if (!mood) throw new Error("No usable classifications returned");
+
+    const payload = Object.assign(
+      { available: true, source: "gemini", model: MOOD_MODEL, updatedAt: new Date().toISOString() },
+      mood
+    );
+    if (debug) payload.stories = classifications;
+
+    const response = json(payload, 200, { "Cache-Control": `public, max-age=${MOOD_CACHE_SECONDS}` });
+    ctx.waitUntil(cache.put(cacheKey, response.clone()));
+    return response;
+  } catch (err) {
+    // Quiet fallback — never break the dashboard. Cache the failure briefly so a
+    // bad key / outage doesn't hammer Gemini on every poll (use ?refresh=1 to retry now).
+    console.warn("Mood failed:", String(err));
+    const response = json(
+      {
+        available: false,
+        reason: "gemini_error",
+        detail: String((err && err.message) || err).slice(0, 200),
+        updatedAt: new Date().toISOString()
+      },
+      200,
+      { "Cache-Control": `public, max-age=${MOOD_FAIL_CACHE_SECONDS}` }
+    );
+    ctx.waitUntil(cache.put(cacheKey, response.clone()));
+    return response;
+  }
+}
+
+/* Ask Gemini to classify the stories. Returns an array of per-story objects.
+   Sends only index/source/title/short-summary/day — no images, no full bodies. */
+async function classifyWithGemini(stories, apiKey) {
+  const compact = stories.map((s, i) => ({
+    i,
+    source: s.source || "",
+    title: s.title || "",
+    summary: s.summary ? String(s.summary).slice(0, MOOD_SUMMARY_MAX) : "",
+    date: s.published ? String(s.published).slice(0, 10) : ""
+  }));
+
+  const prompt =
+    "You are a newsroom classifier for an Irish news dashboard. " +
+    "Judge each story by the substance of its headline and summary, not by sensational wording. " +
+    "Return ONLY JSON matching the schema — no commentary, no markdown.\n" +
+    "For each story keep its \"i\" index and set:\n" +
+    "- sentiment: positive | neutral | negative (overall tone for a general reader)\n" +
+    "- sentimentScore: integer from -100 (very negative) to 100 (very positive)\n" +
+    "- severity: light | normal | serious | heavy (how grave the subject is)\n" +
+    "- severityScore: integer from 0 (trivial) to 100 (death, disaster, war, tragedy)\n" +
+    "- topic: one of " + MOOD_TOPICS.join(", ") + "\n" +
+    "- confidence: number from 0 to 1\n\n" +
+    "Stories:\n" + JSON.stringify(compact);
+
+  const body = {
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig: {
+      responseMimeType: "application/json",
+      responseSchema: MOOD_SCHEMA
+      // Temperature deliberately omitted: Gemini 3 can loop if it's lowered, and
+      // the schema already forces deterministic structure. No thinking field is
+      // sent either (avoids 3.x 400s); flash-lite is fast enough for ~24 items.
+    }
+  };
+
+  const res = await fetch(MOOD_API_URL, {
+    method: "POST",
+    signal: AbortSignal.timeout(MOOD_TIMEOUT_MS),
+    headers: {
+      "Content-Type": "application/json",
+      // Key travels in a header, not the URL, so it never lands in any log line.
+      "x-goog-api-key": apiKey
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error("Gemini HTTP " + res.status + (errText ? ": " + errText.slice(0, 200) : ""));
+  }
+
+  const data = await res.json();
+  const text = extractGeminiText(data);
+  if (!text) throw new Error("Gemini returned no text");
+
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    throw new Error("Gemini JSON parse failed");
+  }
+  const arr = parsed && Array.isArray(parsed.stories)
+    ? parsed.stories
+    : (Array.isArray(parsed) ? parsed : null);
+  if (!arr) throw new Error("Gemini JSON missing 'stories' array");
+  return arr;
+}
+
+/* Pull the JSON text out of a generateContent response, skipping any Gemini-3
+   "thought" parts and surfacing a safety block as an error. */
+function extractGeminiText(data) {
+  const cand = data && data.candidates && data.candidates[0];
+  if (!cand) {
+    const fb = data && data.promptFeedback;
+    if (fb && fb.blockReason) throw new Error("Gemini blocked: " + fb.blockReason);
+    return "";
+  }
+  const parts = cand.content && cand.content.parts;
+  if (!Array.isArray(parts)) return "";
+  return parts
+    .filter((p) => p && typeof p.text === "string" && !p.thought)
+    .map((p) => p.text)
+    .join("");
+}
+
+/* Turn per-story classifications into the small mood object the frontend shows.
+   All maths happens here in the Worker (Gemini only classifies). */
+function aggregateMood(classifications) {
+  const valid = (classifications || []).filter(
+    (c) => c && typeof c.sentimentScore === "number" && typeof c.sentiment === "string"
+  );
+  const n = valid.length;
+  if (!n) return null;
+
+  const sScores = valid.map((c) => clampNum(c.sentimentScore, -100, 100));
+  const avg = sScores.reduce((a, b) => a + b, 0) / n;
+  const med = median(sScores);
+
+  let pos = 0, neu = 0, neg = 0;
+  valid.forEach((c) => {
+    if (c.sentiment === "positive") pos++;
+    else if (c.sentiment === "negative") neg++;
+    else neu++;
+  });
+
+  const topicCounts = {};
+  valid.forEach((c) => {
+    const t = c.topic || "other";
+    topicCounts[t] = (topicCounts[t] || 0) + 1;
+  });
+  const topTopics = Object.keys(topicCounts)
+    .sort((a, b) => topicCounts[b] - topicCounts[a])
+    .slice(0, 3);
+
+  const heavyCount = valid.filter((c) => c.severity === "heavy").length;
+
+  // Mood score = blend of average + median sentiment (median dampens a single
+  // wild outlier), clamped to -100..100. Severity/heavy count is reported as
+  // context but kept out of the headline score to keep it simple and legible.
+  let score = Math.round(0.6 * avg + 0.4 * med);
+  score = clampNum(score, -100, 100);
+
+  return {
+    label: moodLabel(score),
+    score,
+    avgSentiment: Math.round(avg),
+    medianSentiment: Math.round(med),
+    counts: pctSumTo100(pos, neu, neg, n),
+    topTopics,
+    heavyCount,
+    analyzed: n
+  };
+}
+
+/* Score -> label, using the ranges from the spec. */
+function moodLabel(s) {
+  if (s >= 40) return "Bright enough";
+  if (s >= 10) return "Grand-ish";
+  if (s >= -9) return "Mixed bag";
+  if (s >= -39) return "Bit heavy";
+  if (s >= -69) return "Grim enough";
+  return "Full doom scroll";
+}
+
+function median(nums) {
+  const a = nums.slice().sort((x, y) => x - y);
+  const m = Math.floor(a.length / 2);
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+}
+
+function clampNum(v, lo, hi) {
+  return Math.max(lo, Math.min(hi, v));
+}
+
+/* Round positive/neutral/negative to whole percentages that always total 100
+   (the rounding remainder is given to the largest bucket). */
+function pctSumTo100(pos, neu, neg, n) {
+  const rounded = {
+    positive: Math.round((pos / n) * 100),
+    neutral: Math.round((neu / n) * 100),
+    negative: Math.round((neg / n) * 100)
+  };
+  const diff = 100 - (rounded.positive + rounded.neutral + rounded.negative);
+  if (diff !== 0) {
+    const largest = Object.keys(rounded).sort((a, b) => rounded[b] - rounded[a])[0];
+    rounded[largest] += diff;
+  }
+  return rounded;
 }
 
 /* Fetch one feed, parse it, and keep only its first `limit` items. */

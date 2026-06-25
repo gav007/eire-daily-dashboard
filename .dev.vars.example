@@ -1,0 +1,11 @@
+# Local dev secrets for `npx wrangler dev` — COPY this file to `.dev.vars` and
+# paste your real key. `.dev.vars` is git-ignored and asset-ignored; this
+# `.example` template is safe to commit (it contains no real key).
+#
+#   cp .dev.vars.example .dev.vars   # then edit .dev.vars
+#
+# In production DON'T use this file — set a Cloudflare secret instead:
+#   npx wrangler secret put GEMINI_API_KEY
+#
+# Get a key from https://aistudio.google.com/apikey
+GEMINI_API_KEY="your_key_here"

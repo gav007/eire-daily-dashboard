@@ -1,10 +1,18 @@
-# ---- Secrets — never commit these ----
+# ---- Secrets / API keys — never commit these ----
 openweather.txt
 .env
 .env.*
 .dev.vars
 *.key
 secrets.*
+# Gemini / Google AI key files (any of these holds the live key — keep them local)
+gemini_key.txt
+google_api_key.txt
+*_key.txt
+*-key.txt
+*gemini*key*
+*api*key*
+# (.dev.vars.example is intentionally NOT ignored — it's a safe placeholder template)
 
 # ---- Node / Wrangler tooling ----
 node_modules/

@@ -25,8 +25,16 @@ openweather.txt
 .env
 .env.*
 .dev.vars
+.dev.vars.example
 *.key
 secrets.*
+# Gemini / Google AI key files — must NEVER be served publicly (like /ip.py was)
+gemini_key.txt
+google_api_key.txt
+*_key.txt
+*-key.txt
+*gemini*key*
+*api*key*
 
 # Docs / dev scripts — no need to publish
 *.md

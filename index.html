@@ -86,6 +86,20 @@
           <span class="side-count" id="sideCount"></span>
         </div>
         <ul class="upnext" id="upnext"></ul>
+
+        <!-- "The State of It": small AI news-mood gauge, pinned to the bottom of
+             the side column. Hidden by default (CSS) and only revealed by
+             renderMood() in app.js when /api/mood returns a result — so with no
+             Gemini key, or if the call fails, it simply never appears. -->
+        <div class="state" id="stateOfIt">
+          <div class="state-head">The State of It</div>
+          <div class="state-mood">
+            <span class="state-label" id="stateLabel">—</span>
+            <span class="state-score" id="stateScore"></span>
+          </div>
+          <div class="state-breakdown" id="stateBreakdown"></div>
+          <div class="state-weight" id="stateWeight"></div>
+        </div>
       </aside>
     </main>
 

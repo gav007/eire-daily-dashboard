@@ -317,6 +317,8 @@ body {
   display: flex;
   -webkit-flex-direction: column;
   flex-direction: column;
+  min-height: 0;
+  overflow: hidden;   /* clip cleanly if the State of It block shares the column */
 }
 .upnext li {
   display: -webkit-flex;
@@ -355,6 +357,46 @@ body {
   border-bottom-color: transparent;
 }
 .upnext li.current .up-title { color: #ffffff; font-weight: 600; }
+
+/* ---------- "The State of It" — AI news-mood gauge ----------
+   Small editorial metric pinned to the bottom of the side column. Hidden by
+   default; app.js sets display:block only when /api/mood returns a result. */
+.state {
+  -webkit-flex: 0 0 auto;
+  flex: 0 0 auto;
+  margin-top: 12px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  display: none;
+}
+.state-head {
+  font-size: 13px; letter-spacing: 2.5px; text-transform: uppercase;
+  color: #9fb0a8; font-weight: 700; margin-bottom: 9px;
+}
+.state-mood {
+  display: -webkit-flex; display: flex;
+  -webkit-align-items: baseline; align-items: baseline;
+  margin-bottom: 8px;
+}
+.state-label {
+  font-family: "Newsreader", Georgia, "Times New Roman", serif;
+  font-size: 23px; font-weight: 600; letter-spacing: 0.2px;
+  color: #e7d3a0; margin-right: 9px;
+}
+.state-score {
+  font-family: "IBM Plex Mono", "Courier New", monospace;
+  font-size: 16px; font-weight: 500; color: #9fb0a8;
+}
+.state-breakdown {
+  font-size: 13px; line-height: 1.45; color: #9fb0a8; margin-bottom: 4px;
+}
+.state-weight {
+  font-size: 12px; line-height: 1.4; color: #6f8079;
+}
+/* Mood tone tints just the label, staying on the existing green/gold palette. */
+.state.tone-bright .state-label { color: #4fb583; }
+.state.tone-mixed  .state-label { color: #e7d3a0; }
+.state.tone-heavy  .state-label { color: #d8a44a; }
 
 /* ===================== Bottom strip: weather ===================== */
 .strip {
@@ -647,3 +689,12 @@ body.tablet-compact .wx-day-rain { font-size: 11px; }
 
 /* ---- Badge ---- */
 body.tablet-compact .badge { font-size: 12px; padding: 5px 11px; }
+
+/* ---- "The State of It" mood gauge ---- */
+body.tablet-compact .state { margin-top: 8px; padding-top: 10px; }
+body.tablet-compact .state-head { font-size: 11px; letter-spacing: 2px; margin-bottom: 6px; }
+body.tablet-compact .state-mood { margin-bottom: 5px; }
+body.tablet-compact .state-label { font-size: 18px; margin-right: 7px; }
+body.tablet-compact .state-score { font-size: 13px; }
+body.tablet-compact .state-breakdown { font-size: 11px; margin-bottom: 3px; }
+body.tablet-compact .state-weight { font-size: 10.5px; }

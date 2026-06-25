@@ -62,6 +62,8 @@
   var API_BASE = "";
   var NEWS_ENDPOINT = "/api/news";
   var WEATHER_ENDPOINT = "/api/weather";
+  var MOOD_ENDPOINT = "/api/mood";        // "The State of It" AI news-mood (Worker-side Gemini)
+  var MOOD_REFRESH_MS = 30 * 60 * 1000;   // re-poll mood every 30 min (Worker caches it ~3h)
 
   /* Stock Dublin image, used when an article has no image OR its image fails to
      load. Bundled SVG always renders (offline-safe) so the kiosk never shows a
@@ -187,6 +189,12 @@
   var fcTodayRain = $("fcTodayRain");
   var fcTomorrowTemp = $("fcTomorrowTemp");
   var fcTomorrowRain = $("fcTomorrowRain");
+  // "The State of It" mood gauge
+  var stateEl        = $("stateOfIt");
+  var stateLabel     = $("stateLabel");
+  var stateScore     = $("stateScore");
+  var stateBreakdown = $("stateBreakdown");
+  var stateWeight    = $("stateWeight");
 
   /* ---------- Helpers ---------- */
   function pad(n) {
@@ -491,6 +499,68 @@
     var d = iso ? new Date(iso) : new Date();
     if (isNaN(d.getTime())) d = new Date();
     updatedTime.textContent = fmtClock(d) + (err ? " · cached" : "");
+  }
+
+  /* ---------- "The State of It" — AI news-mood gauge ----------
+     The Worker calls Gemini server-side and returns a finished mood object; the
+     browser never touches Gemini or the key. We just fetch /api/mood and paint
+     a small editorial metric. If the result isn't available (no key, Gemini
+     down, too little news), we hide the gauge entirely — never an error state.
+     The Worker caches the mood for ~3h, so polling here is cheap. */
+  function loadMood(force) {
+    if (typeof fetch === "undefined") return;        // ancient WebView: skip silently
+    var url = apiUrl(MOOD_ENDPOINT) + (force ? "?refresh=1" : "");
+    fetch(url)
+      .then(function (r) { return r.json(); })
+      .then(function (m) { renderMood(m); })
+      .catch(function () { renderMood(null); });      // any failure -> just hide it
+  }
+
+  function moodTone(label) {
+    if (label === "Bright enough" || label === "Grand-ish") return "tone-bright";
+    if (label === "Mixed bag") return "tone-mixed";
+    return "tone-heavy"; // Bit heavy / Grim enough / Full doom scroll
+  }
+
+  function renderMood(m) {
+    if (!stateEl) return;
+    if (!m || !m.available || typeof m.score !== "number") {
+      stateEl.style.display = "none";   // quiet fallback: no gauge at all
+      return;
+    }
+    stateEl.className = "state " + moodTone(m.label);
+    setText(stateLabel, m.label || "—");
+    setText(stateScore, "· " + (m.score > 0 ? "+" : "") + m.score);
+
+    var c = m.counts || {};
+    var n = function (v) { return (v === 0 || v) ? v : 0; };
+    setText(
+      stateBreakdown,
+      "Negative " + n(c.negative) + "% · Neutral " + n(c.neutral) + "% · Positive " + n(c.positive) + "%"
+    );
+
+    var tops = (m.topTopics && m.topTopics.length) ? m.topTopics.join(" · ") : "—";
+    setText(stateWeight, "Main weight: " + tops);
+
+    stateEl.style.display = "block";
+  }
+
+  // Console/debug helpers (no UI clutter on the tablet):
+  //   eireMood.refresh()  -> force a fresh Gemini compute now (bypasses 3h cache)
+  //   eireMood.reload()   -> re-fetch whatever the Worker currently has cached
+  //   eireMood.status()   -> log the latest /api/mood payload (add ?debug=1 detail)
+  function exposeMoodApi() {
+    window.eireMood = {
+      refresh: function () { loadMood(true); return "forcing a fresh mood compute…"; },
+      reload: function () { loadMood(false); return "reloading mood…"; },
+      status: function () {
+        fetch(apiUrl(MOOD_ENDPOINT) + "?debug=1")
+          .then(function (r) { return r.json(); })
+          .then(function (m) { console.log("[eireMood]", m); })
+          .catch(function (e) { console.warn("[eireMood] failed:", e && e.message); });
+        return "fetching /api/mood?debug=1 — see console";
+      }
+    };
   }
 
   /* ---------- Weather ambience (V1) ----------
@@ -949,12 +1019,18 @@
     exposeVoiceApi();
     injectVoiceTestPanel();
 
+    // "The State of It": expose the debug API, then fetch the mood once at boot.
+    // The Worker caches it ~3h, so this and the 30-min poll below are cheap.
+    exposeMoodApi();
+
     loadAndRender(true);
     loadWeather();
+    loadMood(false);
     refreshTimer = setInterval(function () {
       loadAndRender(false);
       loadWeather();
     }, REFRESH_MS);
+    setInterval(function () { loadMood(false); }, MOOD_REFRESH_MS);
 
     // tap the hero to skip to the next headline (touch-friendly)
     hero.addEventListener(
