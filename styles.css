@@ -147,20 +147,37 @@ body {
 
 .hero-media {
   position: relative;
-  height: 256px;
-  -webkit-flex: 0 0 256px;
-  flex: 0 0 256px;
+  height: 210px;
+  -webkit-flex: 0 0 210px;
+  flex: 0 0 210px;
   background-color: #1a2620;
+  overflow: hidden;            /* clip the slightly-zoomed ambient fill below */
 }
-.hero-media-img {
-  position: absolute; top: 0; right: 0; bottom: 0; left: 0;
+/* Ambient fill: a darkened, slightly zoomed COVER copy of the SAME photo sitting
+   behind the real image. It colour-fills the band so wide/tall news photos never
+   leave empty black bars. No CSS blur (old WebView + weak GPU choke on filters) —
+   instead it's darkened hard with an inset box-shadow wash (the same trick the
+   tablet-compact block already uses), which reads as a soft cinematic backdrop. */
+.hero-media-bg {
+  position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 0;
   background-size: cover;
+  background-position: center center;
+  background-repeat: no-repeat;
+  -webkit-transform: scale(1.12);
+  transform: scale(1.12);      /* hide the cover's hard edges, soften the fill */
+  box-shadow: inset 0 0 0 2000px rgba(11,17,15,0.70);
+}
+/* Foreground: the FULL image, contained so nothing important is cropped. */
+.hero-media-img {
+  position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 1;
+  background-size: contain;
   background-position: center center;
   background-repeat: no-repeat;
 }
 .hero-media-scrim {
-  /* gradient scrim, as a real element (avoids ::after edge cases on old WebView) */
-  position: absolute; left: 0; right: 0; bottom: 0; height: 120px; z-index: 2;
+  /* gradient scrim, as a real element (avoids ::after edge cases on old WebView).
+     Sits above the image and blends its bottom edge into the card body. */
+  position: absolute; left: 0; right: 0; bottom: 0; height: 92px; z-index: 2;
   background-image: -webkit-linear-gradient(bottom, #141d19, rgba(20,29,25,0));
   background-image: linear-gradient(to top, #141d19, rgba(20,29,25,0));
 }
@@ -178,6 +195,7 @@ body {
     repeating-linear-gradient(135deg, rgba(255,255,255,0.025) 0, rgba(255,255,255,0.025) 14px, rgba(255,255,255,0) 14px, rgba(255,255,255,0) 28px),
     radial-gradient(500px 300px at 50% 30%, rgba(70,150,110,0.12), rgba(26,38,32,0) 70%);
 }
+.hero.no-image .hero-media-bg { display: none; }
 .hero.no-image .hero-media-img { display: none; }
 .hero.no-image .hero-media-scrim { display: none; }
 .hero.no-image .hero-media-fallback {
@@ -200,7 +218,7 @@ body {
   -webkit-box-flex: 1;
   -webkit-flex: 1 1 auto;
   flex: 1 1 auto;
-  padding: 26px 36px 30px;
+  padding: 24px 36px 24px;
   display: -webkit-flex;
   display: flex;
   -webkit-flex-direction: column;
@@ -212,28 +230,30 @@ body {
   display: flex;
   -webkit-align-items: center;
   align-items: center;
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
 .hero-meta > * { margin-right: 16px; }
 .hero-time {
   font-family: "IBM Plex Mono", "Courier New", monospace;
   font-size: 16px; color: #9fb0a8; letter-spacing: 0.5px;
 }
+/* Headline can now run up to 3 lines so stories aren't cut mid-thought. Still a
+   big serif — only nudged 42->40 to win back the vertical room for line 3. */
 .hero-title {
   font-family: "Newsreader", Georgia, "Times New Roman", serif;
   font-weight: 600;
-  font-size: 42px;
-  line-height: 1.1;
-  letter-spacing: -0.4px;
+  font-size: 40px;
+  line-height: 1.14;
+  letter-spacing: -0.3px;
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   overflow: hidden;
 }
 .hero-summary {
-  margin-top: 14px;
-  font-size: 21px;
-  line-height: 1.42;
+  margin-top: 12px;
+  font-size: 19px;
+  line-height: 1.4;
   color: #9fb0a8;
   font-weight: 400;
   display: -webkit-box;
@@ -243,7 +263,7 @@ body {
 }
 .hero-dots {
   margin-top: auto;
-  padding-top: 22px;
+  padding-top: 16px;
   display: -webkit-flex;
   display: flex;
   -webkit-align-items: center;
@@ -303,40 +323,38 @@ body {
   display: flex;
   -webkit-align-items: flex-start;
   align-items: flex-start;
-  padding: 16px 6px;
-  border-bottom: 1px solid rgba(255,255,255,0.07);
+  padding: 14px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
 }
 .upnext li:last-child { border-bottom: none; }
-.up-rail {
-  -webkit-flex: 0 0 4px;
-  flex: 0 0 4px;
-  -webkit-align-self: stretch;
-  align-self: stretch;
-  border-radius: 4px;
-  background-color: rgba(255,255,255,0.12);
-  margin-right: 14px;
-}
 .up-body { min-width: 0; }
+/* Source kicker: clean uppercase label in the source colour, preceded by a small
+   source-coloured dot — the subtle replacement for the old vertical colour bars. */
 .up-src {
-  font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase;
-  font-weight: 700; margin-bottom: 5px;
+  display: block;
+  font-size: 12px; letter-spacing: 1.6px; text-transform: uppercase;
+  font-weight: 700; margin-bottom: 7px;
+}
+.up-dot {
+  display: inline-block;
+  width: 6px; height: 6px; border-radius: 50%;
+  background-color: currentColor;       /* inherits the source colour from .up-src */
+  margin-right: 8px;
+  position: relative; top: -1px;
 }
 .up-title {
-  font-size: 18px; line-height: 1.28; color: #eef3f0;
+  font-size: 18px; line-height: 1.34; color: #d7e0db;
   font-weight: 500;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
   overflow: hidden;
 }
+/* The next-up story is marked only by a soft highlight now — no coloured bar. */
 .upnext li.current {
-  background-color: rgba(255,255,255,0.025);
+  background-color: rgba(255,255,255,0.05);
   border-radius: 12px;
+  border-bottom-color: transparent;
 }
-.upnext li.current .up-rail {
-  background-color: #4fb583;
-  background-image: -webkit-linear-gradient(top, #4fb583, #2f7d56);
-  background-image: linear-gradient(#4fb583, #2f7d56);
-}
-.upnext li.current .up-title { color: #ffffff; }
+.upnext li.current .up-title { color: #ffffff; font-weight: 600; }
 
 /* ===================== Bottom strip: weather ===================== */
 .strip {
@@ -567,15 +585,13 @@ body.tablet-compact .hero-media {
   -webkit-flex: 0 0 150px;
   flex: 0 0 150px;
 }
-/* Stronger, taller scrim + an even dark wash so bright photos don't blow out */
+/* Compact band: the contained image stays crisp; the darkened ambient fill
+   (.hero-media-bg, shared with desktop) handles bright photos, so the scrim now
+   only needs to blend the image's bottom edge into the card body. */
 body.tablet-compact .hero-media-scrim {
-  height: 130px;
-  background-image: -webkit-linear-gradient(bottom, #141d19, rgba(20,29,25,0.15) 70%, rgba(20,29,25,0));
-  background-image: linear-gradient(to top, #141d19, rgba(20,29,25,0.15) 70%, rgba(20,29,25,0));
-}
-body.tablet-compact .hero-media-img {
-  /* inset wash darkens the whole image uniformly (old-WebView safe) */
-  box-shadow: inset 0 0 0 2000px rgba(11,17,15,0.24);
+  height: 64px;
+  background-image: -webkit-linear-gradient(bottom, #141d19, rgba(20,29,25,0));
+  background-image: linear-gradient(to top, #141d19, rgba(20,29,25,0));
 }
 body.tablet-compact .hero-body { padding: 14px 24px 16px; }
 body.tablet-compact .hero-meta { margin-bottom: 10px; }
@@ -596,10 +612,10 @@ body.tablet-compact .side {
 }
 body.tablet-compact .side-head { padding: 0 4px 10px; }
 body.tablet-compact .side-title { letter-spacing: 2px; }
-body.tablet-compact .upnext li { padding: 9px 6px; }
-body.tablet-compact .up-src { font-size: 11px; margin-bottom: 3px; }
-body.tablet-compact .up-title { font-size: 16px; line-height: 1.26; }
-body.tablet-compact .up-rail { margin-right: 11px; }
+body.tablet-compact .upnext li { padding: 10px 8px; }
+body.tablet-compact .up-src { font-size: 11px; letter-spacing: 1.3px; margin-bottom: 5px; }
+body.tablet-compact .up-dot { width: 5px; height: 5px; margin-right: 6px; }
+body.tablet-compact .up-title { font-size: 16px; line-height: 1.3; }
 
 /* ---- Bottom strip: compact weather ---- */
 body.tablet-compact .strip {

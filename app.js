@@ -167,6 +167,7 @@
   var hero = $("hero");
   var heroFill = $("heroFill");
   var heroImg = $("heroImg");
+  var heroImgBg = $("heroImgBg"); // darkened/zoomed ambient fill behind the contained image
   var fallbackG = $("fallbackGlyph");
   var heroBadge = $("heroBadge");
   var heroTime = $("heroTime");
@@ -255,7 +256,10 @@
     var probe = new Image();
     probe.onload = function () {
       if (items[idx] !== item) return;
+      // Foreground = the FULL image (contain). Background = same image as a
+      // darkened, zoomed cover fill, so wide/tall photos never leave empty bars.
       heroImg.style.backgroundImage = "url('" + url + "')";
+      if (heroImgBg) heroImgBg.style.backgroundImage = "url('" + url + "')";
       hero.className = hero.className.replace(/\s*no-image/, "");
     };
     probe.onerror = function () {
@@ -265,6 +269,7 @@
   }
   function showGlyph(item) {
     heroImg.style.backgroundImage = "none";
+    if (heroImgBg) heroImgBg.style.backgroundImage = "none";
     fallbackG.textContent = srcMeta(item.source).glyph;
     if (hero.className.indexOf("no-image") === -1) hero.className += " no-image";
   }
@@ -321,16 +326,17 @@
       var it = items[i];
       var meta = srcMeta(it.source);
       var current = k === 1;
+      // No vertical rail anymore — a small source-coloured dot marks the source,
+      // and the "current" (next-up) row is shown with a subtle background instead.
       html +=
         '<li class="' +
         (current ? "current" : "") +
         '">' +
-        '<span class="up-rail"></span>' +
         '<span class="up-body">' +
         '<span class="up-src ' +
         meta.cls +
-        '">' +
-        it.source +
+        '"><i class="up-dot"></i>' +
+        escapeHtml(it.source) +
         "</span>" +
         '<span class="up-title">' +
         escapeHtml(it.title) +

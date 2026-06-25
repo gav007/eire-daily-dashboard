@@ -31,3 +31,30 @@ secrets.*
 # Docs / dev scripts — no need to publish
 *.md
 validate-feeds.js
+
+# Dev / scratch files — NEVER serve these publicly. (A previous deploy served
+# /ip.py because *.py wasn't excluded; these patterns close that gap.)
+# NOTE: gitignore syntax only treats '#' as a comment at the START of a line,
+# so every pattern below stays on its own line with no trailing comments.
+#
+# *.py            -> ip.py, ip2.py and any other stray scripts in the root
+# current_state   -> QA screenshots / evidence PNGs (large, private)
+# .agents         -> local agent tooling/config
+*.py
+current_state
+current_state/
+.agents
+.agents/
+screenshots
+screenshots/
+evidence
+evidence/
+scratch
+scratch/
+tmp
+tmp/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.log
