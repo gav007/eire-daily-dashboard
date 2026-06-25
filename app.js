@@ -13,7 +13,14 @@
 
   /* Weather ambience (V1) — see the "Weather ambience" section lower down. */
   var AMBIENCE_DIR = "assets/audio/"; // where the loop MP3s live
-  var AMBIENCE_VOLUME = 0.55; // low, calm background level
+  var AMBIENCE_VOLUME = 0.3; // base level for tracks that already sound fine
+  // Per-track volume overrides. Any track listed here plays at its OWN level;
+  // anything not listed falls back to AMBIENCE_VOLUME above. To boost another
+  // track, add a line (key = its .mp3 filename); to drop it back, delete the line.
+  var AMBIENCE_VOLUMES = {
+    "background-peace.mp3": 1,
+    "day-clear.mp3": 1, // the quiet default track — boosted so it's audible
+  };
   var WIND_VERY_KMH = 35; // "very windy" threshold
   var WIND_MOD_KMH = 20; // "windy" threshold
   // Which MP3 plays for each weather/time situation.
@@ -524,7 +531,9 @@
      policy); if so, the gesture fallback below will start it on the first tap. */
   function tryPlayAmbience() {
     if (!ambienceEl || !currentTrack) return;
-    ambienceEl.volume = AMBIENCE_VOLUME;
+    // Per-track volume: use the override for this track if one is set, else the base.
+    var vol = AMBIENCE_VOLUMES[currentTrack];
+    ambienceEl.volume = typeof vol === "number" ? vol : AMBIENCE_VOLUME;
     var p = ambienceEl.play();
     if (p && p.then) {
       p.then(function () {
