@@ -27,6 +27,26 @@
     calm:      "background-peace.mp3" // default: cloudy / fog / snow / unknown
   };
 
+  /* Dublin voice clips (V1) — a SECOND audio layer that plays on TOP of the
+     ambience (the ambience above is never paused or replaced). Short one-shot
+     clips that play at most ONCE per hour, only 08:00–20:59, never at night,
+     and never if the ambience sound isn't actually running. Full rules + test
+     helpers are in the "Dublin voice clips" section lower down. */
+  var VOICE_DIR        = "assets/voices/"; // where the one-shot voice WAVs live
+  var VOICE_VOLUME     = 0.8;              // audible over the 0.3 ambience, not blasting
+  var VOICE_START_HOUR = 8;                // first hour a voice may play (08:00)
+  var VOICE_END_HOUR   = 21;               // stop before this hour (last play 20:00–20:59)
+  var VOICE_SLOT_KEY   = "eireVoiceSlot";  // localStorage: last hour-slot we played in
+  var VOICE_ALT_KEY    = "eireVoiceAlt";   // localStorage: default-clip alternation counter
+  // Which WAV plays for each weather situation (first match wins, in this order).
+  var VOICE_FILES = {
+    rain:     "rain1.wav",           // rain / drizzle
+    wind:     "wind.wav",            // windy (windSpeed >= WIND_MOD_KMH)
+    sunny:    "hot_sunny.wav",       // clear / sunny / hot / warm
+    default1: "default_dublin1.wav", // generic Dublin personality (alternates 1<->2)
+    default2: "default_dublin2.wav"
+  };
+
   /* Backend endpoints. The frontend NEVER fetches RSS directly — it calls these
      Cloudflare Worker endpoints, which normalise RSS + weather into clean JSON.
      API_BASE = "" means same-origin (the Worker/Pages serves this page too).
@@ -353,8 +373,9 @@
     fetchWeather(function (err, w) {
       renderWeather(w);
       setUpdated(w && w.updatedAt, err);
-      lastWeather = w || lastWeather;   // remember for ambience selection
+      lastWeather = w || lastWeather;   // remember for ambience + voice selection
       applyAmbience();                  // pick + (maybe) play the background track
+      maybePlayVoice();                 // and (maybe) play an hourly voice clip on top
     });
   }
 
@@ -438,6 +459,7 @@
       p.then(function () {
         audioUnlocked = true;
         removeGestureUnlock();   // playing now, stop listening for a gesture
+        maybePlayVoice();        // audio is live now — a due voice clip may fire
       }).catch(function (e) {
         // Most common case: autoplay blocked until a real tap. Stay quiet;
         // the gesture fallback (still attached) will start it on first touch.
@@ -447,6 +469,7 @@
       // Very old WebView: play() returns undefined — assume it started.
       audioUnlocked = true;
       removeGestureUnlock();
+      maybePlayVoice();
     }
   }
 
@@ -484,6 +507,187 @@
     }
 
     tryPlayAmbience();
+  }
+
+  /* ---------- Dublin voice clips (V1) ----------
+     A SECOND audio layer on TOP of the ambience above. The ambience is never
+     paused or replaced — short one-shot Dublin voice clips play alongside it
+     through their own <audio id="voice"> element.
+
+     Rules (kept deliberately simple for this test version):
+       • at most ONCE per clock hour
+       • only 08:00–20:59 (daytime/evening) — never during night mode
+       • the played hour is stored in localStorage, so a page refresh / kiosk
+         reload won't replay that hour's clip
+       • only when the ambience sound is actually running (audioUnlocked) AND the
+         voice layer isn't muted — so "sound off" means no voice either
+       • weather picks the clip: rain/drizzle → rain1, windy → wind,
+         clear/sunny/hot/warm → hot_sunny, otherwise an alternating Dublin default.
+
+     Test WITHOUT waiting for the top of an hour — open the browser console:
+       eireVoice.play()        // play the current weather pick right now
+       eireVoice.test("rain")  // play one clip: rain|wind|sunny|default1|default2
+       eireVoice.reset()       // clear the "already played this hour" marker
+       eireVoice.status()      // log the current state (what it would pick, etc.)
+       eireVoice.mute()        // turn the voice layer off (ambience keeps playing)
+       eireVoice.unmute()
+     …or load the page with ?voicetest=1 to get a tiny on-screen test panel. */
+
+  var voiceEl      = null;   // the one-shot <audio> element (assigned in init)
+  var voiceEnabled = true;   // software mute for the voice layer only
+
+  // localStorage with an in-memory fallback (Fully Kiosk / private mode safe).
+  var voiceMem = {};
+  function vGet(k) {
+    try { return window.localStorage.getItem(k); }
+    catch (e) { return (k in voiceMem) ? voiceMem[k] : null; }
+  }
+  function vSet(k, v) {
+    try { window.localStorage.setItem(k, v); }
+    catch (e) { voiceMem[k] = v; }
+  }
+
+  // A unique marker per calendar hour, e.g. "2026-06-25-14".
+  function hourSlot(date) {
+    return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" +
+           pad(date.getDate()) + "-" + pad(date.getHours());
+  }
+
+  function isDefaultVoice(f) {
+    return f === VOICE_FILES.default1 || f === VOICE_FILES.default2;
+  }
+
+  // Alternate default_dublin1 / default_dublin2 across plays (persisted, so it
+  // keeps alternating even across page refreshes).
+  function pickDefaultVoice() {
+    var n = parseInt(vGet(VOICE_ALT_KEY) || "0", 10);
+    if (isNaN(n)) n = 0;
+    return (n % 2 === 0) ? VOICE_FILES.default1 : VOICE_FILES.default2;
+  }
+  function bumpDefaultVoice() {
+    var n = parseInt(vGet(VOICE_ALT_KEY) || "0", 10);
+    if (isNaN(n)) n = 0;
+    vSet(VOICE_ALT_KEY, "" + (n + 1));
+  }
+
+  // Choose a clip from the current weather (same priority order as the brief).
+  function pickVoiceFile(weather) {
+    var cond = (weather && weather.condition ? weather.condition : "").toLowerCase();
+    var wind = (weather && typeof weather.windSpeed === "number") ? weather.windSpeed : 0;
+
+    var isRainy = (cond.indexOf("rain") !== -1) || (cond.indexOf("drizzle") !== -1);
+    var isWindy = (wind >= WIND_MOD_KMH);
+    var isSunny = (cond.indexOf("clear") !== -1) || (cond.indexOf("sunny") !== -1) ||
+                  (cond.indexOf("fair")  !== -1) || (cond.indexOf("hot")   !== -1) ||
+                  (cond.indexOf("warm")  !== -1);
+
+    if (isRainy) return VOICE_FILES.rain;   // 1
+    if (isWindy) return VOICE_FILES.wind;   // 2
+    if (isSunny) return VOICE_FILES.sunny;  // 3
+    return pickDefaultVoice();              // 4 (default, alternates)
+  }
+
+  // Actually play a clip over the ambience. The ambience element is untouched,
+  // so the background loop keeps going underneath the voice.
+  function playVoiceFile(file) {
+    if (!voiceEl || !file) return;
+    voiceEl.src = VOICE_DIR + file;
+    voiceEl.volume = VOICE_VOLUME;
+    try { voiceEl.currentTime = 0; } catch (e) {}
+    var p = voiceEl.play();
+    if (p && p.catch) {
+      p.catch(function (e) {
+        console.warn("Voice clip blocked (needs a tap first?):", e && e.message);
+      });
+    }
+    if (isDefaultVoice(file)) bumpDefaultVoice();  // advance the 1<->2 alternation
+  }
+
+  // The scheduled gate: enforce the once-per-hour / daytime / sound-on rules.
+  // Safe to call as often as we like — it no-ops unless a play is actually due.
+  function maybePlayVoice() {
+    if (!voiceEl || !voiceEnabled) return;
+    if (!audioUnlocked) return;                 // ambience isn't running -> sound is "off"
+
+    var d = new Date();
+    var hour = d.getHours();
+    if (hour < VOICE_START_HOUR || hour >= VOICE_END_HOUR) return;  // night / too early
+
+    var slot = hourSlot(d);
+    if (vGet(VOICE_SLOT_KEY) === slot) return;   // already played this hour (survives refresh)
+
+    vSet(VOICE_SLOT_KEY, slot);                  // claim the hour BEFORE playing (no double-fire)
+    playVoiceFile(pickVoiceFile(lastWeather));
+  }
+
+  /* ---------- Voice test helpers ----------
+     Test plays IGNORE the hour/slot and mute gates (a console call or button
+     tap is itself the user gesture browsers need), so every clip can be heard
+     immediately without waiting for the top of an hour. */
+  function voiceTest(which) {
+    var map = {
+      rain: VOICE_FILES.rain, wind: VOICE_FILES.wind, sunny: VOICE_FILES.sunny,
+      default1: VOICE_FILES.default1, default2: VOICE_FILES.default2
+    };
+    playVoiceFile(map[which] || which || pickVoiceFile(lastWeather));
+  }
+  function exposeVoiceApi() {
+    window.eireVoice = {
+      play:   function () { playVoiceFile(pickVoiceFile(lastWeather)); }, // current weather pick now
+      test:   voiceTest,                                                  // a named clip now
+      reset:  function () { vSet(VOICE_SLOT_KEY, ""); return "voice hour cleared"; },
+      mute:   function () { voiceEnabled = false; return "voice muted"; },
+      unmute: function () { voiceEnabled = true;  return "voice on"; },
+      status: function () {
+        var d = new Date();
+        return {
+          hour:           d.getHours(),
+          inWindow:       (d.getHours() >= VOICE_START_HOUR && d.getHours() < VOICE_END_HOUR),
+          playedThisHour: (vGet(VOICE_SLOT_KEY) === hourSlot(d)),
+          audioUnlocked:  audioUnlocked,
+          voiceEnabled:   voiceEnabled,
+          wouldPick:      pickVoiceFile(lastWeather),
+          weatherCond:    lastWeather && lastWeather.condition,
+          windSpeed:      lastWeather && lastWeather.windSpeed
+        };
+      }
+    };
+  }
+
+  // Tiny fixed-position test panel, ONLY when the URL has ?voicetest=1.
+  // position:fixed means it overlays the kiosk without touching the 1280x800
+  // layout, so it can never shift or clip the dashboard.
+  function injectVoiceTestPanel() {
+    if (!/[?&]voicetest=1/.test(location.search || "")) return;
+    if (!document.body) return;
+    var bar = document.createElement("div");
+    bar.style.cssText = "position:fixed;left:8px;bottom:8px;z-index:99999;" +
+      "background:rgba(11,17,15,0.92);border:1px solid #d8a44a;border-radius:8px;" +
+      "padding:6px 8px;font:12px 'IBM Plex Sans',sans-serif;color:#e7d3a0;" +
+      "-webkit-box-shadow:0 2px 10px rgba(0,0,0,0.5);box-shadow:0 2px 10px rgba(0,0,0,0.5);";
+    var defs = [
+      ["Pick now", function () { window.eireVoice.play(); }],
+      ["Rain",     function () { voiceTest("rain"); }],
+      ["Wind",     function () { voiceTest("wind"); }],
+      ["Sunny",    function () { voiceTest("sunny"); }],
+      ["Dublin 1", function () { voiceTest("default1"); }],
+      ["Dublin 2", function () { voiceTest("default2"); }]
+    ];
+    var label = document.createElement("span");
+    label.textContent = "Voice test:";
+    label.style.cssText = "margin-right:4px;opacity:0.8;";
+    bar.appendChild(label);
+    for (var i = 0; i < defs.length; i++) {
+      (function (d) {
+        var b = document.createElement("button");
+        b.textContent = d[0];
+        b.style.cssText = "margin:2px;padding:4px 8px;border:1px solid #4fb583;" +
+          "background:#13201b;color:#e7d3a0;border-radius:5px;cursor:pointer;font:12px inherit;";
+        b.onclick = d[1];
+        bar.appendChild(b);
+      })(defs[i]);
+    }
+    document.body.appendChild(bar);
   }
 
   /* ---------- Scale-to-fit (use the LAYOUT viewport) ----------
@@ -586,6 +790,12 @@
     // BEFORE the first weather load, so applyAmbience() is ready to play.
     ambienceEl = $("ambience");
     addGestureUnlock();
+
+    // Voice clips: grab the one-shot <audio>, expose the console test API, and
+    // (only with ?voicetest=1) draw the tiny on-screen test panel.
+    voiceEl = $("voice");
+    exposeVoiceApi();
+    injectVoiceTestPanel();
 
     loadAndRender(true);
     loadWeather();

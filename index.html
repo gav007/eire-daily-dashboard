@@ -138,6 +138,13 @@
          volume (adjust with the tablet's volume buttons). To remove the feature
          later: delete this <audio> line + the "Weather ambience" section in app.js. -->
     <audio id="ambience" loop preload="none"></audio>
+
+    <!-- Dublin voice clips (V1): a SECOND, NON-looping audio layer that plays short
+         one-shot voice clips on TOP of the ambience above (at most once per hour,
+         08:00–21:00 only). Auto-picked from the weather. Add ?voicetest=1 to the URL
+         for an on-screen test panel, or use eireVoice.* in the console. To remove:
+         delete this <audio> line + the "Dublin voice clips" section in app.js. -->
+    <audio id="voice" preload="none"></audio>
   </div>
   <script src="app.js"></script>
 </body>
