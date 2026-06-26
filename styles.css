@@ -578,6 +578,38 @@ body {
 .hero.swapping .hero-media-img,
 .hero.swapping .hero-media-fallback { opacity: 0; }
 
+/* ===================== Dynamic hero-copy fitting =====================
+   app.js measures whether the hero summary is being clipped and, ONLY for the
+   affected story, raises a copy "level" class on #hero. The default (no class)
+   is unchanged, so normal stories look exactly as before — we never shrink every
+   card. Level 1 spends the spare space under the copy; level 2 also trims the
+   gaps and the image band so a long explainer gets a 4th line. The progress dots
+   stay visible at every level. Compact-mode mirrors live in the tablet-compact
+   block lower down. Old-Android safe: plain values, -webkit- prefixes. */
+
+/* Level 1 — gentle: one extra summary line + slightly tighter vertical rhythm. */
+.hero.hero-copy-tight .hero-meta { margin-bottom: 10px; }
+.hero.hero-copy-tight .hero-summary { margin-top: 10px; -webkit-line-clamp: 3; }
+.hero.hero-copy-tight .hero-dots { padding-top: 12px; }
+
+/* Level 2 — roomiest: smaller image band, tighter gaps, up to 4 lines, and a
+   small summary shrink (19->18). The headline is left untouched so it stays big
+   and readable; the band is sized so the dots always remain in view. */
+.hero.hero-copy-extra .hero-media {
+  height: 176px;
+  -webkit-flex: 0 0 176px;
+  flex: 0 0 176px;
+}
+.hero.hero-copy-extra .hero-body { padding: 18px 36px 18px; }
+.hero.hero-copy-extra .hero-meta { margin-bottom: 8px; }
+.hero.hero-copy-extra .hero-summary {
+  margin-top: 8px;
+  font-size: 18px;
+  line-height: 1.36;
+  -webkit-line-clamp: 4;
+}
+.hero.hero-copy-extra .hero-dots { padding-top: 10px; }
+
 /* =====================================================================
    TABLET-KIOSK COMPACT LAYOUT  (Lenovo Yoga Tab 3 / Fully Kiosk)
    Added by JS as body.tablet-compact when the layout viewport is the full
@@ -698,3 +730,26 @@ body.tablet-compact .state-label { font-size: 18px; margin-right: 7px; }
 body.tablet-compact .state-score { font-size: 13px; }
 body.tablet-compact .state-breakdown { font-size: 11px; margin-bottom: 3px; }
 body.tablet-compact .state-weight { font-size: 10.5px; }
+
+/* ---- Dynamic hero-copy fitting (compact mirror) ----
+   Same two levels as desktop, retuned for the 960x600 compact canvas. There is
+   even more spare space under the copy here, so long explainers comfortably
+   reach a 4th line with the dots still showing. */
+body.tablet-compact .hero.hero-copy-tight .hero-meta { margin-bottom: 8px; }
+body.tablet-compact .hero.hero-copy-tight .hero-summary { margin-top: 6px; -webkit-line-clamp: 3; }
+body.tablet-compact .hero.hero-copy-tight .hero-dots { padding-top: 10px; }
+
+body.tablet-compact .hero.hero-copy-extra .hero-media {
+  height: 120px;
+  -webkit-flex: 0 0 120px;
+  flex: 0 0 120px;
+}
+body.tablet-compact .hero.hero-copy-extra .hero-body { padding: 10px 24px 12px; }
+body.tablet-compact .hero.hero-copy-extra .hero-meta { margin-bottom: 6px; }
+body.tablet-compact .hero.hero-copy-extra .hero-summary {
+  margin-top: 6px;
+  font-size: 16px;
+  line-height: 1.34;
+  -webkit-line-clamp: 4;
+}
+body.tablet-compact .hero.hero-copy-extra .hero-dots { padding-top: 8px; }

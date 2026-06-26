@@ -175,6 +175,7 @@
   var heroTime = $("heroTime");
   var heroTitle = $("heroTitle");
   var heroSummary = $("heroSummary");
+  var heroBody = $("heroBody"); // copy column — measured to detect summary clipping
   var heroDots = $("heroDots");
   var upnext = $("upnext");
   var sideCount = $("sideCount");
@@ -292,6 +293,7 @@
     heroSummary.textContent = item.summary || "";
     applyMedia(item);
     renderDots();
+    fitHeroCopy(); // measure the summary and pick the roomiest fit for THIS story
   }
   function renderHero() {
     if (!items.length) return;
@@ -322,6 +324,90 @@
       html += '<i class="' + (i === idx ? "on" : "") + '"></i>';
     }
     heroDots.innerHTML = html;
+  }
+
+  /* ---------- Dynamic hero-copy fitting ----------
+     Most summaries fit fine at the default "roomy" spacing (clamped to 2 lines),
+     so the common case is left exactly as designed — we never shrink every card.
+     But some explainers need more room. After each hero render we MEASURE whether
+     the summary is actually being clipped and, only for that one story, step the
+     hero up to a tighter copy layout that first spends the spare space under the
+     text, then trims gaps + the image band a touch so the explainer gets a
+     3rd/4th line — without ever pushing the progress dots out of the card.
+
+     How clipping is detected: a -webkit-line-clamp + overflow:hidden box reports
+     its FULL text height as scrollHeight and its visible (clamped) height as
+     clientHeight, so scrollHeight > clientHeight means the summary is cut off.
+     Reading those properties also forces a reflow, so each measurement taken
+     right after a class change is accurate. We additionally check the body
+     doesn't overflow (which would clip the dots) before settling on level 1.
+
+     Levels (set on #hero only; mirrored for desktop + tablet-compact in CSS):
+       0  (no class)       default look — summary up to 2 lines
+       1  hero-copy-tight  gentle — summary up to 3 lines, slightly tighter gaps
+       2  hero-copy-extra  roomiest — smaller image band, up to 4 lines, slight
+                           summary shrink; sized to always fit (dots stay visible) */
+  function setHeroCopyLevel(level) {
+    var cn = hero.className
+      .replace(/\s*hero-copy-tight/g, "")
+      .replace(/\s*hero-copy-extra/g, "");
+    if (level === 1) cn += " hero-copy-tight";
+    else if (level >= 2) cn += " hero-copy-extra";
+    hero.className = cn.replace(/\s+/g, " ");
+  }
+  // +2px tolerance so sub-pixel line metrics never read as a false clip.
+  function isClipped(el) {
+    return el ? el.scrollHeight - el.clientHeight > 2 : false;
+  }
+  function fitHeroCopy() {
+    if (!heroSummary) return;
+
+    // Always start from the default look (the previous story may have tightened
+    // it). Each isClipped() read below forces a reflow, so the next measurement
+    // reflects the class we just set.
+    setHeroCopyLevel(0);
+    if (!isClipped(heroSummary)) return; // fits in 2 lines — leave it roomy
+
+    // Level 1: spend the spare space under the copy on a 3rd summary line.
+    // Settle here only if the summary now fits AND the dots aren't pushed out.
+    setHeroCopyLevel(1);
+    if (!isClipped(heroSummary) && !isClipped(heroBody)) return;
+
+    // Level 2: trim the image band + gaps for a 4th line. Bounded and safe by
+    // design — even a 3-line headline + 4-line summary fits with the dots still
+    // visible, so anything longer simply clamps here.
+    setHeroCopyLevel(2);
+  }
+
+  // Console/debug helper (no on-screen clutter), handy for checking the fit on
+  // the tablet: eireFit.status() reports the measurements + current level;
+  // eireFit.level(0|1|2) forces a level; eireFit.refit() re-runs the auto fit.
+  function exposeFitApi() {
+    window.eireFit = {
+      status: function () {
+        return {
+          level: /hero-copy-extra/.test(hero.className)
+            ? 2
+            : /hero-copy-tight/.test(hero.className)
+            ? 1
+            : 0,
+          summaryScrollH: heroSummary && heroSummary.scrollHeight,
+          summaryClientH: heroSummary && heroSummary.clientHeight,
+          summaryClipped: isClipped(heroSummary),
+          bodyScrollH: heroBody && heroBody.scrollHeight,
+          bodyClientH: heroBody && heroBody.clientHeight,
+          bodyOverflow: isClipped(heroBody),
+        };
+      },
+      level: function (n) {
+        setHeroCopyLevel(n);
+        return "forced hero-copy level " + n;
+      },
+      refit: function () {
+        fitHeroCopy();
+        return "re-fit hero copy";
+      },
+    };
   }
 
   /* ---------- Render the side "Up Next" column ---------- */
@@ -976,6 +1062,8 @@
   function onViewportChange() {
     applyTabletMode();
     scaleToFit();
+    // Toggling compact mode changes the hero geometry — re-fit the current copy.
+    if (items.length) fitHeroCopy();
   }
 
   /* ---------- Clock ---------- */
@@ -1023,6 +1111,9 @@
     // The Worker caches it ~3h, so this and the 30-min poll below are cheap.
     exposeMoodApi();
 
+    // Hero-copy auto-fit: expose its debug helper (eireFit.*) for tablet testing.
+    exposeFitApi();
+
     loadAndRender(true);
     loadWeather();
     loadMood(false);
@@ -1031,6 +1122,16 @@
       loadWeather();
     }, REFRESH_MS);
     setInterval(function () { loadMood(false); }, MOOD_REFRESH_MS);
+
+    // Google Fonts can arrive AFTER first paint, which changes text metrics and
+    // could leave the first card mis-fitted. Re-fit once they're ready. Guarded
+    // so ancient WebViews (no document.fonts) simply skip this and rely on the
+    // next 12s rotation to re-measure.
+    if (document.fonts && document.fonts.ready && document.fonts.ready.then) {
+      document.fonts.ready.then(function () {
+        if (items.length) fitHeroCopy();
+      });
+    }
 
     // tap the hero to skip to the next headline (touch-friendly)
     hero.addEventListener(
