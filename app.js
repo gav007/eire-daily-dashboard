@@ -21,7 +21,7 @@
     "background-peace.mp3": 1,
     "day-clear.mp3": 1, // the quiet default track — boosted so it's audible
   };
-  var WIND_VERY_KMH = 35; // "very windy" threshold
+  var WIND_VERY_KMH = 30; // "very windy" threshold
   var WIND_MOD_KMH = 20; // "windy" threshold
   // Which MP3 plays for each weather/time situation.
   var AMBIENCE_TRACKS = {
@@ -62,8 +62,8 @@
   var API_BASE = "";
   var NEWS_ENDPOINT = "/api/news";
   var WEATHER_ENDPOINT = "/api/weather";
-  var MOOD_ENDPOINT = "/api/mood";        // "The State of It" AI news-mood (Worker-side Gemini)
-  var MOOD_REFRESH_MS = 30 * 60 * 1000;   // re-poll mood every 30 min (Worker caches it ~3h)
+  var MOOD_ENDPOINT = "/api/mood"; // "The State of It" AI news-mood (Worker-side Gemini)
+  var MOOD_REFRESH_MS = 30 * 60 * 1000; // re-poll mood every 30 min (Worker caches it ~3h)
 
   /* Stock Dublin image, used when an article has no image OR its image fails to
      load. Bundled SVG always renders (offline-safe) so the kiosk never shows a
@@ -191,11 +191,11 @@
   var fcTomorrowTemp = $("fcTomorrowTemp");
   var fcTomorrowRain = $("fcTomorrowRain");
   // "The State of It" mood gauge
-  var stateEl        = $("stateOfIt");
-  var stateLabel     = $("stateLabel");
-  var stateScore     = $("stateScore");
+  var stateEl = $("stateOfIt");
+  var stateLabel = $("stateLabel");
+  var stateScore = $("stateScore");
   var stateBreakdown = $("stateBreakdown");
-  var stateWeight    = $("stateWeight");
+  var stateWeight = $("stateWeight");
 
   /* ---------- Helpers ---------- */
   function pad(n) {
@@ -348,9 +348,7 @@
        2  hero-copy-extra  roomiest — smaller image band, up to 4 lines, slight
                            summary shrink; sized to always fit (dots stay visible) */
   function setHeroCopyLevel(level) {
-    var cn = hero.className
-      .replace(/\s*hero-copy-tight/g, "")
-      .replace(/\s*hero-copy-extra/g, "");
+    var cn = hero.className.replace(/\s*hero-copy-tight/g, "").replace(/\s*hero-copy-extra/g, "");
     if (level === 1) cn += " hero-copy-tight";
     else if (level >= 2) cn += " hero-copy-extra";
     hero.className = cn.replace(/\s+/g, " ");
@@ -389,8 +387,8 @@
           level: /hero-copy-extra/.test(hero.className)
             ? 2
             : /hero-copy-tight/.test(hero.className)
-            ? 1
-            : 0,
+              ? 1
+              : 0,
           summaryScrollH: heroSummary && heroSummary.scrollHeight,
           summaryClientH: heroSummary && heroSummary.clientHeight,
           summaryClipped: isClipped(heroSummary),
@@ -594,12 +592,18 @@
      down, too little news), we hide the gauge entirely — never an error state.
      The Worker caches the mood for ~3h, so polling here is cheap. */
   function loadMood(force) {
-    if (typeof fetch === "undefined") return;        // ancient WebView: skip silently
+    if (typeof fetch === "undefined") return; // ancient WebView: skip silently
     var url = apiUrl(MOOD_ENDPOINT) + (force ? "?refresh=1" : "");
     fetch(url)
-      .then(function (r) { return r.json(); })
-      .then(function (m) { renderMood(m); })
-      .catch(function () { renderMood(null); });      // any failure -> just hide it
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (m) {
+        renderMood(m);
+      })
+      .catch(function () {
+        renderMood(null);
+      }); // any failure -> just hide it
   }
 
   function moodTone(label) {
@@ -611,7 +615,7 @@
   function renderMood(m) {
     if (!stateEl) return;
     if (!m || !m.available || typeof m.score !== "number") {
-      stateEl.style.display = "none";   // quiet fallback: no gauge at all
+      stateEl.style.display = "none"; // quiet fallback: no gauge at all
       return;
     }
     stateEl.className = "state " + moodTone(m.label);
@@ -619,13 +623,21 @@
     setText(stateScore, "· " + (m.score > 0 ? "+" : "") + m.score);
 
     var c = m.counts || {};
-    var n = function (v) { return (v === 0 || v) ? v : 0; };
+    var n = function (v) {
+      return v === 0 || v ? v : 0;
+    };
     setText(
       stateBreakdown,
-      "Negative " + n(c.negative) + "% · Neutral " + n(c.neutral) + "% · Positive " + n(c.positive) + "%"
+      "Negative " +
+        n(c.negative) +
+        "% · Neutral " +
+        n(c.neutral) +
+        "% · Positive " +
+        n(c.positive) +
+        "%"
     );
 
-    var tops = (m.topTopics && m.topTopics.length) ? m.topTopics.join(" · ") : "—";
+    var tops = m.topTopics && m.topTopics.length ? m.topTopics.join(" · ") : "—";
     setText(stateWeight, "Main weight: " + tops);
 
     stateEl.style.display = "block";
@@ -637,15 +649,27 @@
   //   eireMood.status()   -> log the latest /api/mood payload (add ?debug=1 detail)
   function exposeMoodApi() {
     window.eireMood = {
-      refresh: function () { loadMood(true); return "forcing a fresh mood compute…"; },
-      reload: function () { loadMood(false); return "reloading mood…"; },
+      refresh: function () {
+        loadMood(true);
+        return "forcing a fresh mood compute…";
+      },
+      reload: function () {
+        loadMood(false);
+        return "reloading mood…";
+      },
       status: function () {
         fetch(apiUrl(MOOD_ENDPOINT) + "?debug=1")
-          .then(function (r) { return r.json(); })
-          .then(function (m) { console.log("[eireMood]", m); })
-          .catch(function (e) { console.warn("[eireMood] failed:", e && e.message); });
+          .then(function (r) {
+            return r.json();
+          })
+          .then(function (m) {
+            console.log("[eireMood]", m);
+          })
+          .catch(function (e) {
+            console.warn("[eireMood] failed:", e && e.message);
+          });
         return "fetching /api/mood?debug=1 — see console";
-      }
+      },
     };
   }
 
@@ -1121,7 +1145,9 @@
       loadAndRender(false);
       loadWeather();
     }, REFRESH_MS);
-    setInterval(function () { loadMood(false); }, MOOD_REFRESH_MS);
+    setInterval(function () {
+      loadMood(false);
+    }, MOOD_REFRESH_MS);
 
     // Google Fonts can arrive AFTER first paint, which changes text metrics and
     // could leave the first card mis-fitted. Re-fit once they're ready. Guarded
