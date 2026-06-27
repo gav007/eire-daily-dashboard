@@ -1020,6 +1020,117 @@
     document.body.appendChild(bar);
   }
 
+  /* ---------- New music track demo/test (TEMPORARY, isolated) ----------
+     A throwaway harness for auditioning a NEW ambience track before it's wired
+     into the weather/time logic. It plays through its OWN <audio> element built
+     on the fly, so it NEVER touches the live ambience layer, its volumes, or any
+     timer. Nothing here runs unless you explicitly trigger it.
+
+     On the tablet:  open the dashboard URL with ?musictest=1  → a small panel
+     appears bottom-RIGHT with Play / Stop and a volume slider. Slide until it
+     sounds right; the number shown is the value to reuse when we slot it in
+     properly (planned ~18:00–22:00).
+
+     In a console (laptop):
+       eireMusic.play()     // play the demo track now (loops)
+       eireMusic.stop()
+       eireMusic.vol(0.5)   // set volume 0..1, returns the value */
+  var MUSIC_TEST_FILE = "MidnightDone.mp3"; // the new track being auditioned
+  var MUSIC_TEST_VOLUME = 0.6; // starting demo level — tune via the slider
+  var musicTestEl = null; // dedicated <audio>, created lazily on first play
+
+  function musicTestAudio() {
+    if (!musicTestEl) {
+      musicTestEl = document.createElement("audio");
+      musicTestEl.loop = true; // loop so you can listen + adjust freely
+      musicTestEl.preload = "auto";
+      musicTestEl.src = AMBIENCE_DIR + MUSIC_TEST_FILE;
+    }
+    return musicTestEl;
+  }
+  function musicTestPlay() {
+    var el = musicTestAudio();
+    el.volume = MUSIC_TEST_VOLUME;
+    var p = el.play();
+    if (p && p.catch) {
+      p.catch(function (e) {
+        console.warn("Music demo blocked until a tap:", e && e.message);
+      });
+    }
+  }
+  function musicTestStop() {
+    if (musicTestEl) {
+      musicTestEl.pause();
+      musicTestEl.currentTime = 0;
+    }
+  }
+  function musicTestVol(v) {
+    v = Number(v);
+    if (isNaN(v)) v = MUSIC_TEST_VOLUME;
+    v = Math.max(0, Math.min(1, v));
+    MUSIC_TEST_VOLUME = v;
+    if (musicTestEl) musicTestEl.volume = v;
+    return v;
+  }
+  function exposeMusicTestApi() {
+    window.eireMusic = { play: musicTestPlay, stop: musicTestStop, vol: musicTestVol };
+  }
+
+  // On-screen panel, ONLY with ?musictest=1. Bottom-RIGHT so it never collides
+  // with the bottom-left voice panel; position:fixed keeps it off the 1280x800
+  // layout so it can't shift or clip the dashboard.
+  function injectMusicTestPanel() {
+    if (!/[?&]musictest=1/.test(location.search || "")) return;
+    if (!document.body) return;
+    var bar = document.createElement("div");
+    bar.style.cssText =
+      "position:fixed;right:8px;bottom:8px;z-index:99999;" +
+      "background:rgba(11,17,15,0.92);border:1px solid #d8a44a;border-radius:8px;" +
+      "padding:6px 8px;font:12px 'IBM Plex Sans',sans-serif;color:#e7d3a0;" +
+      "-webkit-box-shadow:0 2px 10px rgba(0,0,0,0.5);box-shadow:0 2px 10px rgba(0,0,0,0.5);";
+
+    var label = document.createElement("span");
+    label.textContent = "Music test:";
+    label.style.cssText = "margin-right:4px;opacity:0.8;";
+    bar.appendChild(label);
+
+    var btnStyle =
+      "margin:2px;padding:4px 8px;border:1px solid #4fb583;" +
+      "background:#13201b;color:#e7d3a0;border-radius:5px;cursor:pointer;font:12px inherit;";
+
+    var playBtn = document.createElement("button");
+    playBtn.textContent = "Play";
+    playBtn.style.cssText = btnStyle;
+    playBtn.onclick = musicTestPlay;
+    bar.appendChild(playBtn);
+
+    var stopBtn = document.createElement("button");
+    stopBtn.textContent = "Stop";
+    stopBtn.style.cssText = btnStyle;
+    stopBtn.onclick = musicTestStop;
+    bar.appendChild(stopBtn);
+
+    // Volume slider + live readout (the number to bake in later).
+    var readout = document.createElement("span");
+    readout.style.cssText = "margin-left:6px;min-width:30px;display:inline-block;color:#d8a44a;";
+    readout.textContent = MUSIC_TEST_VOLUME.toFixed(2);
+
+    var slider = document.createElement("input");
+    slider.type = "range";
+    slider.min = "0";
+    slider.max = "1";
+    slider.step = "0.05";
+    slider.value = String(MUSIC_TEST_VOLUME);
+    slider.style.cssText = "vertical-align:middle;margin-left:6px;width:90px;";
+    slider.oninput = function () {
+      readout.textContent = musicTestVol(slider.value).toFixed(2);
+    };
+    bar.appendChild(slider);
+    bar.appendChild(readout);
+
+    document.body.appendChild(bar);
+  }
+
   /* ---------- Scale-to-fit (use the LAYOUT viewport) ----------
      The <meta name="viewport" content="width=1280"> pins the layout viewport
      to 1280x800 — that is what the dashboard is actually laid out against, and
@@ -1130,6 +1241,12 @@
     voiceEl = $("voice");
     exposeVoiceApi();
     injectVoiceTestPanel();
+
+    // New-track audition (temporary, isolated): expose eireMusic.* and, only
+    // with ?musictest=1, draw the bottom-right Play/Stop + volume panel. None of
+    // this touches the live ambience layer; it's purely for hearing MidnightDone.
+    exposeMusicTestApi();
+    injectMusicTestPanel();
 
     // "The State of It": expose the debug API, then fetch the mood once at boot.
     // The Worker caches it ~3h, so this and the 30-min poll below are cheap.
