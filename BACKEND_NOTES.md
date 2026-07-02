@@ -1,50 +1,142 @@
-# Backend notes — Cloudflare Worker API
+# Backend notes - Cloudflare Worker API
 
-The frontend calls the backend **only** (never RSS/OpenWeather directly):
-`app.js` → `API_BASE + /api/news` and `API_BASE + /api/weather`.
-On any failure the frontend falls back to mock data, so the kiosk never breaks.
+The frontend calls the backend only. It does not fetch RSS, Open-Meteo, or Gemini directly.
 
-## Architecture — one Worker serves site + API
+`app.js` uses same-origin endpoints:
 
-`wrangler.toml` configures a single Worker (`src/worker.js`) that:
-- Serves the static frontend from the repo root via the `[assets]` binding
-  (index.html, app.js, styles.css, assets/**).
-- Handles `GET /api/news` and `GET /api/health` in code.
+- `/api/news`
+- `/api/weather`
+- `/api/mood`
+- `/api/health`
 
-Because the site and API share **one origin**, the frontend keeps `API_BASE = ""`
-and calls `/api/news` — nothing to change on the frontend. Point the tablet at the
-Worker's URL (`https://eire-daily-dashboard.<account>.workers.dev`, or a custom domain).
+On browser-side failure, the kiosk falls back quietly so the screen does not look broken.
 
-### `/api/news` — DONE ✅ (built + verified against live feeds 2026-06-24)
-- Fetches RTÉ (10), TheJournal (10), Dublin Live *Dublin-local* (5) in parallel.
-- Image order: `media:content` → `media:thumbnail` → `enclosure` → `<img>` in body.
-- Merges → sorts newest-first → de-dupes by article URL → caches **10 min** (Cache API).
-- One feed down ⇒ others still return. **All** feeds down ⇒ `502` JSON (not cached).
-- Verified: 25 items, sorted, 0 missing fields, 0 null images, JSON matches the shape below.
-- `/api/health` ⇒ `{ "status": "ok", "time": "ISO" }`.
+## Architecture
 
-### Deploy (wrangler)
+`wrangler.toml` configures one Cloudflare Worker (`src/worker.js`) that:
+
+- Serves the static frontend from the repo root via the `[assets]` binding.
+- Handles API routes in Worker code.
+- Keeps `API_BASE = ""` in the frontend because the site and API share one origin.
+
+Production Worker:
+https://eire-daily-dashboard.gav-s-may.workers.dev
+
+## Deploy
+
+```bash
+npm install
+npm run dev
+npm run deploy
+npm run tail
+npm run validate-feeds
 ```
-npm install            # gets wrangler (devDependency)
-npx wrangler login     # once, to authorise your Cloudflare account
-npx wrangler deploy    # publishes the Worker + static assets
-npx wrangler tail      # live logs (see feed failures, etc.)
+
+`wrangler.toml` is the live config. A Cloudflare bot PR from June 24, 2026 added a separate `wrangler.jsonc`, but that config is not needed for the current Worker setup and should not be merged blindly.
+
+## Static asset safety
+
+`wrangler.toml` serves assets from `.`. That makes `.assetsignore` important.
+
+`.assetsignore` blocks public upload of:
+
+- `.git`, `.wrangler`, `node_modules`
+- Worker source and config files
+- `.env`, `.dev.vars`, key files, and secret-looking files
+- Markdown docs and validation scripts
+- scratch/evidence/screenshots/tmp folders
+- stray Python files such as the previously exposed `ip.py` type of mistake
+
+Only the real frontend files should be public: `index.html`, `app.js`, `styles.css`, and `assets/**`.
+
+## `/api/health`
+
+Returns a small JSON health response:
+
+```json
+{ "status": "ok", "time": "ISO date string" }
 ```
-- **Asset-upload fix:** `.assetsignore` (next to `wrangler.toml`) stops `.git`, `.wrangler`,
-  `node_modules`, `src`, `openweather.txt`, `.env`, `.dev.vars`, configs and docs from being
-  uploaded as public files. Only the real frontend files are published.
-- Weather endpoint is **not** wired yet — frontend uses MOCK_WEATHER until `/api/weather` exists.
 
-## Weather — OpenWeather (NOT wired yet)
+## `/api/news`
 
-- **Location (fixed):** lat `53.37644855902749`, lon `-6.214687313622119`, elev ~30 m (north Dublin).
-  City label shown on the dashboard is the static string "Dublin".
-- **API key:** stored in `openweather.txt` locally (`OPENWEATHER_KEY=...`) — **gitignored, never committed**.
-  In the Worker, set it as a secret: `wrangler secret put OPENWEATHER_KEY`. Do NOT hardcode it.
-- Suggested source: OpenWeather *One Call 3.0* (`/data/3.0/onecall?lat=..&lon=..&units=metric&appid=KEY`)
-  — gives current + daily in one call. Map to the response shape below.
+Built and verified against live feeds on June 24, 2026.
 
-### `/api/weather` response shape (what the frontend expects)
+Sources:
+
+- RTÉ News: `https://www.rte.ie/feeds/rss/?index=/news/&limit=100`
+- RTÉ Business: `https://www.rte.ie/feeds/rss/?index=/news/business/&limit=100`
+- RTÉ Technology: `https://www.rte.ie/feeds/rss/?index=/news/technology/&limit=100`
+- TheJournal: `https://www.thejournal.ie/feed/`
+- Dublin Live local: `https://www.dublinlive.ie/news/dublin-news/?service=rss`
+
+Behaviour:
+
+- Fetches feeds in parallel.
+- One failed feed does not sink the others.
+- All feeds failed returns `502` and is not cached.
+- Merges, sorts newest-first, de-dupes by article URL.
+- Caches successful responses for 10 minutes.
+
+Response shape:
+
+```json
+{
+  "items": [
+    {
+      "source": "RTÉ News",
+      "title": "...",
+      "summary": "...",
+      "url": "...",
+      "published": "ISO date string",
+      "image": "URL or null"
+    }
+  ],
+  "updatedAt": "ISO date string"
+}
+```
+
+Image preference order:
+
+1. `media:content`
+2. `media:thumbnail`
+3. `enclosure` image URL
+4. first `<img src="...">` inside the feed body
+5. `null`, where the frontend uses `assets/dublin.svg`
+
+The Dublin Live thumbnail can be tiny, so `media:content` is preferred when present.
+
+## `/api/weather`
+
+Live and wired. Uses Open-Meteo, so no OpenWeather API key is required.
+
+Location:
+
+- Label: Dublin
+- Latitude: `53.37645`
+- Longitude: `-6.21469`
+- Timezone: `Europe/Dublin`
+
+Upstream:
+
+`https://api.open-meteo.com/v1/forecast`
+
+Requested fields:
+
+- current temperature
+- current precipitation
+- current weather code
+- current wind speed
+- daily max/min temperature
+- daily max precipitation probability
+
+Behaviour:
+
+- Caches successful responses for 10 minutes.
+- Upstream failure returns `502` and is not cached.
+- Maps WMO weather codes into simple kiosk labels such as `Clear`, `Partly cloudy`, `Rain`, and `Heavy rain`.
+
+Response shape:
+
 ```json
 {
   "location": "Dublin",
@@ -54,76 +146,55 @@ npx wrangler tail      # live logs (see feed failures, etc.)
   "precipitation": 0.4,
   "windSpeed": 18,
   "updatedAt": "ISO date string",
-  "today":    { "max": 17, "min": 10, "rainChance": 50 },
-  "tomorrow": { "max": 16, "min": 9,  "rainChance": 35 }
+  "today": { "max": 17, "min": 10, "rainChance": 50 },
+  "tomorrow": { "max": 16, "min": 9, "rainChance": 35 }
 }
 ```
-- `rainChance` = OpenWeather `pop` * 100 (rounded). `precipitation` in mm. `windSpeed` km/h (OpenWeather m/s × 3.6).
 
-## News — RSS normalisation
+## `/api/mood` - The State of It
 
-Sources (Worker fetches + cleans these; frontend never touches RSS):
-- RTÉ News — `https://www.rte.ie/feeds/rss/?index=/news/&limit=100`
-- TheJournal — `https://www.thejournal.ie/feed/`
-- Dublin Live (Dublin-local) — `https://www.dublinlive.ie/news/dublin-news/?service=rss`
-- Dublin Live (general) — `https://www.dublinlive.ie/news/?service=rss` *(optional, see note)*
+Live and wired when `GEMINI_API_KEY` is set as a Cloudflare secret.
 
-### ✅ Validation results — run `node validate-feeds.js` (last run 2026-06-24)
+The browser never calls Gemini directly. The Worker sends compact story data to Gemini and returns a small mood object for the dashboard.
 
-| Feed | URL | HTTP | Format | Items | Images | Verdict |
-|------|-----|------|--------|-------|--------|---------|
-| RTÉ News | `.../feeds/rss/?index=/news/&limit=100` | 200 `application/rss+xml` | RSS | **60** | 60/60 | ✅ OK |
-| TheJournal | `.../feed/` | 200 `application/rss+xml` | RSS | **40** | 40/40 | ✅ OK |
-| Dublin Live — News | `.../news/?service=rss` | 200 `application/rss+xml` | RSS | **25** | 25/25 | ✅ OK |
-| Dublin Live — Dublin news | `.../news/dublin-news/?service=rss` | 200 `application/rss+xml` | RSS | **25** | 25/25 | ✅ OK |
+Behaviour:
 
-All four: HTTP 200, no redirects, valid RSS, real current headlines, `<pubDate>` (RFC-822)
-parses cleanly, and **100% of items carry an image key** — so the Dublin stock fallback
-should rarely be needed for live data.
+- Missing key returns `{ "available": false, "reason": "no_key" }`.
+- Gemini failure returns `{ "available": false, "reason": "gemini_error" }` with HTTP 200 so the dashboard can hide the gauge quietly.
+- Successful mood responses are cached for about 3 hours.
+- Failure responses are cached briefly to avoid hammering Gemini.
+- `?refresh=1` forces a fresh compute.
+- `?debug=1` includes story-level classifications.
 
-**Notes / decisions for the Worker:**
-- **RTÉ `limit=100` actually returns 60** items (the feed caps there). Fine — 60 is plenty.
-- **The two Dublin Live feeds overlap heavily** — the general `/news/` feed already contains the
-  `/news/dublin-news/` items (first ~5 were identical on the test run). **Pick ONE** (recommend the
-  Dublin-local `dublin-news` feed for this dashboard) **or merge + de-dupe by article URL.** Do not
-  ingest both blindly or you'll get duplicate cards.
-- TheJournal item URLs end in `-<id>-MonYYYY/`; Dublin Live end in `-<numericId>`; both are stable
-  for de-duping across sources.
-- Dates: RTÉ/TheJournal use `+0100` (IST), Dublin Live uses `+0000` (UTC) — all parse via `new Date()`.
+Current model in `src/worker.js`:
 
-### Image key extraction — VERIFIED per feed (2026-06-24)
-What each feed's first `<item>` actually carries:
-- **RTÉ** → `<media:content … width="800">` only. Clean 800px JPEGs (`rte.ie/images/*.jpg`).
-- **TheJournal** → `<media:content>` **and** `<media:thumbnail>`. Use `media:content` (≈630px).
-- **Dublin Live** → `<media:content>`, `<media:thumbnail>`, **and** `<enclosure>`.
-  ⚠️ `media:thumbnail` is a tiny **98px** crop (`/ALTERNATES/s98/`); `media:content`/`enclosure`
-  give the usable ~615px (`/ALTERNATES/s615/`). **Prefer `media:content`, not the thumbnail.**
+```js
+const MOOD_MODEL = "gemini-3.1-flash-lite";
+```
 
-Extraction order (first hit wins — prefers the largest image):
-1. `<media:content url="...">`  ← all three feeds; best quality. **Primary.**
-2. `<enclosure url="..." type="image/*">`  ← Dublin Live full-size fallback.
-3. `<media:thumbnail url="...">`  ← last resort (may be tiny — see above).
-4. First `<img src="...">` in `<content:encoded>` / `<description>` HTML.
-5. `<image><url>...</url></image>` (channel-level) — generic, avoid if possible.
-6. If still nothing → `image: null`; the frontend shows the bundled **Dublin stock image**
-   (`assets/dublin.svg`), then the source glyph if even that fails.
+Expected successful response shape:
 
-In practice **100% of live items across all four feeds already have `media:content`**, so the
-stock fallback is essentially never hit with real data. Upgrade any `http:` → `https:` so images
-load on the tablet's WebView.
-
-### `/api/news` response shape
 ```json
 {
-  "items": [
-    { "source": "RTÉ News", "title": "…", "summary": "…",
-      "url": "…", "published": "ISO date string", "image": "URL or null" }
-  ],
-  "updatedAt": "ISO date string"
+  "available": true,
+  "source": "gemini",
+  "model": "gemini-3.1-flash-lite",
+  "updatedAt": "ISO date string",
+  "label": "Bit heavy",
+  "score": -17,
+  "avgSentiment": -19,
+  "medianSentiment": -15,
+  "counts": {
+    "positive": 21,
+    "neutral": 29,
+    "negative": 50
+  },
+  "topTopics": ["economy", "world", "sport"],
+  "heavyCount": 3,
+  "analyzed": 24
 }
 ```
 
 ## CORS
-If the Worker serves the API on a different origin than the page, add
-`Access-Control-Allow-Origin` (or serve page + API from the same Worker/Pages project,
-in which case keep `API_BASE = ""`).
+
+The current app is same-origin, so CORS is mostly harmless belt-and-braces. If the frontend is ever served from a different origin, keep `Access-Control-Allow-Origin` enabled or set `API_BASE` deliberately.
