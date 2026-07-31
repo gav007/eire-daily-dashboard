@@ -45,15 +45,49 @@
   var VOICE_VOLUME = 0.8; // audible over the 0.3 ambience, not blasting
   var VOICE_START_HOUR = 8; // first hour a voice may play (08:00)
   var VOICE_END_HOUR = 21; // stop before this hour (last play 20:00–20:59)
-  var VOICE_SLOT_KEY = "eireVoiceSlot"; // localStorage: last hour-slot we played in
-  var VOICE_ALT_KEY = "eireVoiceAlt"; // localStorage: default-clip alternation counter
-  // Which WAV plays for each weather situation (first match wins, in this order).
-  var VOICE_FILES = {
-    rain: "rain1.wav", // rain / drizzle
-    wind: "wind.wav", // windy (windSpeed >= WIND_MOD_KMH)
-    sunny: "hot_sunny.wav", // clear / sunny / hot / warm
-    default1: "default_dublin1.wav", // generic Dublin personality (alternates 1<->2)
-    default2: "default_dublin2.wav",
+  // Minutes between clips. Change this one number to make the kiosk chattier or
+  // quieter, or set it live on the tablet with eireVoice.every(20) — no deploy
+  // needed, it persists in localStorage.
+  var VOICE_GAP_MIN = 3;
+  var VOICE_GAP_KEY = "eireVoiceLast"; // localStorage: timestamp of the last play
+  var VOICE_GAP_OVERRIDE_KEY = "eireVoiceGap"; // localStorage: eireVoice.every() override
+  var VOICE_TURN_KEY = "eireVoiceTurn"; // localStorage: weather <-> mood alternation
+  var VOICE_ROT_PREFIX = "eireVoiceRot:"; // localStorage: per-set rotation index
+  var VOICE_TICK_MS = 30000; // how often we check whether a clip is due
+
+  /* The clip library. Two families:
+
+       WEATHER sets — picked from the live Open-Meteo conditions.
+       MOOD sets    — picked from "The State of It" sentiment reading.
+
+     Each set rotates through its clips in order, and the position is persisted,
+     so you hear every clip in a set before any of them repeats. */
+  var VOICE_SETS = {
+    // Weather
+    rain: ["rain1.wav", "rain2.wav", "rain3.wav", "rain4.wav", "rain5.wav", "rain6.wav"],
+    frost: ["frost1.wav", "frost2.wav"], // snow, or genuinely cold
+    sun: ["sun1.wav", "sun2.wav", "sun3.wav", "sun4.wav", "sun5.wav"],
+    wind: ["wind.wav"], // only the one wind clip so far
+    dublin: ["default_dublin1.wav", "default_dublin2.wav"], // generic filler
+
+    // Mood — one set per sentiment tier, brightest first
+    goodnews: ["goodnews1.wav", "goodnews2.wav", "goodnews3.wav"],
+    grand: ["grand1.wav", "grand2.wav", "grand3.wav"],
+    mixed: ["mixed1.wav", "mixed2.wav", "mixed3.wav"],
+    heavy: ["heavy1.wav", "heavy2.wav", "heavy3.wav"],
+    grim: ["grim1.wav", "grim2.wav", "grim3.wav"],
+    doom: ["doom1.wav", "doom2.wav", "doom3.wav"],
+  };
+
+  // Fallback map used only before the mood baseline has warmed up, keyed on the
+  // absolute label from the Worker.
+  var VOICE_ABS_LABEL_SETS = {
+    "Bright enough": "goodnews",
+    "Grand-ish": "grand",
+    "Mixed bag": "mixed",
+    "Bit heavy": "heavy",
+    "Grim enough": "grim",
+    "Full doom scroll": "doom",
   };
 
   /* Backend endpoints. The frontend NEVER fetches RSS directly — it calls these
@@ -640,6 +674,7 @@
       stateEl.style.display = "none"; // quiet fallback: no gauge at all
       return;
     }
+    lastMood = m; // remember it for the mood voice clips
 
     /* Lead with the RELATIVE reading when we have a baseline. The absolute
        score lands in the same band nearly every day — news is reliably
@@ -732,6 +767,7 @@
   var ambienceEl = null; // the <audio> element (assigned in init)
   var currentTrack = ""; // filename currently loaded, so we don't restart it
   var lastWeather = null; // most recent weather object, for re-picks on refresh
+  var lastMood = null; // most recent /api/mood payload, for mood voice picks
   var audioUnlocked = false; // true once playback has actually started
 
   /* Decide which track fits the weather + time. First match wins (priority). */
@@ -829,24 +865,31 @@
      paused or replaced — short one-shot Dublin voice clips play alongside it
      through their own <audio id="voice"> element.
 
-     Rules (kept deliberately simple for this test version):
-       • at most ONCE per clock hour
+     Rules:
+       • at most one clip every VOICE_GAP_MIN minutes
        • only 08:00–20:59 (daytime/evening) — never during night mode
-       • the played hour is stored in localStorage, so a page refresh / kiosk
-         reload won't replay that hour's clip
+       • the last play time is stored in localStorage, so a page refresh / kiosk
+         reload won't immediately replay
        • only when the ambience sound is actually running (audioUnlocked) AND the
          voice layer isn't muted — so "sound off" means no voice either
-       • weather picks the clip: rain/drizzle → rain1, windy → wind,
-         clear/sunny/hot/warm → hot_sunny, otherwise an alternating Dublin default.
 
-     Test WITHOUT waiting for the top of an hour — open the browser console:
-       eireVoice.play()        // play the current weather pick right now
-       eireVoice.test("rain")  // play one clip: rain|wind|sunny|default1|default2
-       eireVoice.reset()       // clear the "already played this hour" marker
-       eireVoice.status()      // log the current state (what it would pick, etc.)
-       eireVoice.mute()        // turn the voice layer off (ambience keeps playing)
+     Two families of clip, alternating turn about so you hear both:
+       WEATHER — rain / frost / wind / sun, else a generic Dublin filler
+       MOOD    — goodnews / grand / mixed / heavy / grim / doom, chosen from how
+                 today's news sentiment compares to the trailing fortnight
+     Each set rotates through its clips in order and remembers its position, so
+     every clip in a set is heard before any of them repeats.
+
+     Test without waiting — open the browser console:
+       eireVoice.play()          // play the next clip right now
+       eireVoice.test("rain")    // next clip from a set, or an exact filename
+       eireVoice.sets()          // list the sets and how many clips each has
+       eireVoice.every(20)       // change the gap to 20 min (saved on the tablet)
+       eireVoice.reset()         // make the next clip due immediately
+       eireVoice.status()        // what it would pick, and why
+       eireVoice.mute()          // turn the voice layer off (ambience keeps playing)
        eireVoice.unmute()
-     …or load the page with ?voicetest=1 to get a tiny on-screen test panel. */
+     …or load the page with ?voicetest=1 for an on-screen button per set. */
 
   var voiceEl = null; // the one-shot <audio> element (assigned in init)
   var voiceEnabled = true; // software mute for the voice layer only
@@ -868,54 +911,77 @@
     }
   }
 
-  // A unique marker per calendar hour, e.g. "2026-06-25-14".
-  function hourSlot(date) {
-    return (
-      date.getFullYear() +
-      "-" +
-      pad(date.getMonth() + 1) +
-      "-" +
-      pad(date.getDate()) +
-      "-" +
-      pad(date.getHours())
-    );
+  // How many minutes between clips right now (eireVoice.every() wins if set).
+  function voiceGapMin() {
+    var v = parseFloat(vGet(VOICE_GAP_OVERRIDE_KEY));
+    return isFinite(v) && v > 0 ? v : VOICE_GAP_MIN;
   }
 
-  function isDefaultVoice(f) {
-    return f === VOICE_FILES.default1 || f === VOICE_FILES.default2;
+  /* Take the next clip from a set and advance that set's rotation. Persisting
+     the index is what stops the same clip being picked over and over — you get
+     rain1, rain2, rain3… then back around. */
+  function nextFromSet(setName) {
+    var list = VOICE_SETS[setName];
+    if (!list || !list.length) return null;
+    var key = VOICE_ROT_PREFIX + setName;
+    var i = parseInt(vGet(key) || "0", 10);
+    if (!isFinite(i) || i < 0) i = 0;
+    i = i % list.length;
+    vSet(key, "" + ((i + 1) % list.length));
+    return list[i];
   }
 
-  // Alternate default_dublin1 / default_dublin2 across plays (persisted, so it
-  // keeps alternating even across page refreshes).
-  function pickDefaultVoice() {
-    var n = parseInt(vGet(VOICE_ALT_KEY) || "0", 10);
-    if (isNaN(n)) n = 0;
-    return n % 2 === 0 ? VOICE_FILES.default1 : VOICE_FILES.default2;
-  }
-  function bumpDefaultVoice() {
-    var n = parseInt(vGet(VOICE_ALT_KEY) || "0", 10);
-    if (isNaN(n)) n = 0;
-    vSet(VOICE_ALT_KEY, "" + (n + 1));
-  }
-
-  // Choose a clip from the current weather (same priority order as the brief).
-  function pickVoiceFile(weather) {
+  // Which WEATHER set fits the current conditions. First match wins.
+  function weatherVoiceSet(weather) {
     var cond = (weather && weather.condition ? weather.condition : "").toLowerCase();
     var wind = weather && typeof weather.windSpeed === "number" ? weather.windSpeed : 0;
+    var temp = weather && typeof weather.temperature === "number" ? weather.temperature : null;
 
-    var isRainy = cond.indexOf("rain") !== -1 || cond.indexOf("drizzle") !== -1;
-    var isWindy = wind >= WIND_MOD_KMH;
-    var isSunny =
+    if (cond.indexOf("rain") !== -1 || cond.indexOf("drizzle") !== -1 || cond.indexOf("thunder") !== -1) {
+      return "rain";
+    }
+    if (cond.indexOf("snow") !== -1 || (temp !== null && temp <= 3)) return "frost";
+    if (wind >= WIND_MOD_KMH) return "wind";
+    if (
       cond.indexOf("clear") !== -1 ||
       cond.indexOf("sunny") !== -1 ||
-      cond.indexOf("fair") !== -1 ||
-      cond.indexOf("hot") !== -1 ||
-      cond.indexOf("warm") !== -1;
+      cond.indexOf("fair") !== -1
+    ) {
+      return "sun";
+    }
+    return "dublin"; // cloudy / fog / anything else
+  }
 
-    if (isRainy) return VOICE_FILES.rain; // 1
-    if (isWindy) return VOICE_FILES.wind; // 2
-    if (isSunny) return VOICE_FILES.sunny; // 3
-    return pickDefaultVoice(); // 4 (default, alternates)
+  /* Which MOOD set fits the current news sentiment.
+
+     Driven off the RELATIVE reading (how today compares to the trailing
+     fortnight), not the absolute score. The absolute score sits in the same
+     band nearly every day, so keying off it would mean hearing the "heavy"
+     clips essentially forever and never the other fifteen. Until the baseline
+     warms up we fall back to the absolute label. */
+  function moodVoiceSet(mood) {
+    if (!mood || !mood.available) return null;
+
+    if (mood.relative && typeof mood.relative.z === "number") {
+      var z = mood.relative.z;
+      if (z >= 1.5) return "goodnews";
+      if (z >= 0.5) return "grand";
+      if (z > -0.5) return "mixed";
+      if (z > -1.5) return "heavy";
+      if (z > -2.5) return "grim";
+      return "doom";
+    }
+    return VOICE_ABS_LABEL_SETS[mood.label] || null;
+  }
+
+  /* Alternate weather -> mood -> weather -> mood so both families get heard.
+     If the mood side isn't available yet, weather covers for it. */
+  function pickVoiceFile() {
+    var wantMood = vGet(VOICE_TURN_KEY) === "mood";
+    var set = wantMood ? moodVoiceSet(lastMood) : null;
+    if (!set) set = weatherVoiceSet(lastWeather);
+    vSet(VOICE_TURN_KEY, wantMood ? "weather" : "mood");
+    return nextFromSet(set);
   }
 
   // Actually play a clip over the ambience. The ambience element is untouched,
@@ -933,49 +999,69 @@
         console.warn("Voice clip blocked (needs a tap first?):", e && e.message);
       });
     }
-    if (isDefaultVoice(file)) bumpDefaultVoice(); // advance the 1<->2 alternation
   }
 
-  // The scheduled gate: enforce the once-per-hour / daytime / sound-on rules.
-  // Safe to call as often as we like — it no-ops unless a play is actually due.
+  // Minutes until the next clip is due (0 = due now).
+  function voiceDueInMin() {
+    var last = parseInt(vGet(VOICE_GAP_KEY) || "0", 10);
+    if (!isFinite(last) || last <= 0) return 0;
+    var left = last + voiceGapMin() * 60000 - Date.now();
+    return left <= 0 ? 0 : Math.round((left / 60000) * 10) / 10;
+  }
+
+  // The scheduled gate: enforce the gap / daytime / sound-on rules. Safe to
+  // call as often as we like — it no-ops unless a play is actually due.
   function maybePlayVoice() {
     if (!voiceEl || !voiceEnabled) return;
     if (!audioUnlocked) return; // ambience isn't running -> sound is "off"
 
-    var d = new Date();
-    var hour = d.getHours();
+    var hour = new Date().getHours();
     if (hour < VOICE_START_HOUR || hour >= VOICE_END_HOUR) return; // night / too early
+    if (voiceDueInMin() > 0) return; // played too recently (survives refresh)
 
-    var slot = hourSlot(d);
-    if (vGet(VOICE_SLOT_KEY) === slot) return; // already played this hour (survives refresh)
-
-    vSet(VOICE_SLOT_KEY, slot); // claim the hour BEFORE playing (no double-fire)
-    playVoiceFile(pickVoiceFile(lastWeather));
+    var file = pickVoiceFile();
+    if (!file) return;
+    vSet(VOICE_GAP_KEY, "" + Date.now()); // claim the slot BEFORE playing (no double-fire)
+    playVoiceFile(file);
   }
 
   /* ---------- Voice test helpers ----------
      Test plays IGNORE the hour/slot and mute gates (a console call or button
      tap is itself the user gesture browsers need), so every clip can be heard
      immediately without waiting for the top of an hour. */
+  /* voiceTest("rain") plays the next clip from a set; voiceTest("rain3.wav")
+     plays that exact file. Passing nothing plays whatever is currently due. */
   function voiceTest(which) {
-    var map = {
-      rain: VOICE_FILES.rain,
-      wind: VOICE_FILES.wind,
-      sunny: VOICE_FILES.sunny,
-      default1: VOICE_FILES.default1,
-      default2: VOICE_FILES.default2,
-    };
-    playVoiceFile(map[which] || which || pickVoiceFile(lastWeather));
+    if (!which) return playVoiceFile(pickVoiceFile());
+    if (VOICE_SETS[which]) return playVoiceFile(nextFromSet(which));
+    playVoiceFile(/\.wav$/i.test(which) ? which : which + ".wav");
   }
+
   function exposeVoiceApi() {
     window.eireVoice = {
       play: function () {
-        playVoiceFile(pickVoiceFile(lastWeather));
-      }, // current weather pick now
-      test: voiceTest, // a named clip now
+        playVoiceFile(pickVoiceFile());
+      }, // whatever is next in the rotation, now
+      test: voiceTest, // a named set or exact filename, now
+      sets: function () {
+        var out = {};
+        for (var k in VOICE_SETS) {
+          if (VOICE_SETS.hasOwnProperty(k)) out[k] = VOICE_SETS[k].length + " clips";
+        }
+        return out;
+      },
+      every: function (minutes) {
+        var n = parseFloat(minutes);
+        if (!isFinite(n) || n <= 0) {
+          vSet(VOICE_GAP_OVERRIDE_KEY, "");
+          return "gap reset to the built-in " + VOICE_GAP_MIN + " min";
+        }
+        vSet(VOICE_GAP_OVERRIDE_KEY, "" + n);
+        return "a clip every " + n + " min (saved on this tablet)";
+      },
       reset: function () {
-        vSet(VOICE_SLOT_KEY, "");
-        return "voice hour cleared";
+        vSet(VOICE_GAP_KEY, "");
+        return "gap cleared — next clip is due now";
       },
       mute: function () {
         voiceEnabled = false;
@@ -990,12 +1076,18 @@
         return {
           hour: d.getHours(),
           inWindow: d.getHours() >= VOICE_START_HOUR && d.getHours() < VOICE_END_HOUR,
-          playedThisHour: vGet(VOICE_SLOT_KEY) === hourSlot(d),
+          gapMin: voiceGapMin(),
+          dueInMin: voiceDueInMin(),
+          nextFamily: vGet(VOICE_TURN_KEY) === "mood" ? "mood" : "weather",
+          weatherSet: weatherVoiceSet(lastWeather),
+          moodSet: moodVoiceSet(lastMood),
           audioUnlocked: audioUnlocked,
           voiceEnabled: voiceEnabled,
-          wouldPick: pickVoiceFile(lastWeather),
           weatherCond: lastWeather && lastWeather.condition,
+          temperature: lastWeather && lastWeather.temperature,
           windSpeed: lastWeather && lastWeather.windSpeed,
+          moodLabel: lastMood && lastMood.label,
+          moodZ: lastMood && lastMood.relative && lastMood.relative.z,
         };
       },
     };
@@ -1009,10 +1101,14 @@
     if (!document.body) return;
     var bar = document.createElement("div");
     bar.style.cssText =
-      "position:fixed;left:8px;bottom:8px;z-index:99999;" +
+      "position:fixed;left:8px;bottom:8px;z-index:99999;max-width:640px;" +
       "background:rgba(11,17,15,0.92);border:1px solid #d8a44a;border-radius:8px;" +
       "padding:6px 8px;font:12px 'IBM Plex Sans',sans-serif;color:#e7d3a0;" +
       "-webkit-box-shadow:0 2px 10px rgba(0,0,0,0.5);box-shadow:0 2px 10px rgba(0,0,0,0.5);";
+
+    // One button per clip set, built straight from VOICE_SETS so adding a set
+    // above automatically adds its button here. Each tap plays the next clip in
+    // that set, so repeated taps walk through all of them.
     var defs = [
       [
         "Pick now",
@@ -1020,37 +1116,19 @@
           window.eireVoice.play();
         },
       ],
-      [
-        "Rain",
-        function () {
-          voiceTest("rain");
-        },
-      ],
-      [
-        "Wind",
-        function () {
-          voiceTest("wind");
-        },
-      ],
-      [
-        "Sunny",
-        function () {
-          voiceTest("sunny");
-        },
-      ],
-      [
-        "Dublin 1",
-        function () {
-          voiceTest("default1");
-        },
-      ],
-      [
-        "Dublin 2",
-        function () {
-          voiceTest("default2");
-        },
-      ],
     ];
+    for (var s in VOICE_SETS) {
+      if (!VOICE_SETS.hasOwnProperty(s)) continue;
+      (function (name) {
+        defs.push([
+          name + " (" + VOICE_SETS[name].length + ")",
+          function () {
+            voiceTest(name);
+          },
+        ]);
+      })(s);
+    }
+
     var label = document.createElement("span");
     label.textContent = "Voice test:";
     label.style.cssText = "margin-right:4px;opacity:0.8;";
@@ -1179,6 +1257,9 @@
     voiceEl = $("voice");
     exposeVoiceApi();
     injectVoiceTestPanel();
+    // Clips are due on a minutes-scale gap now, so check far more often than
+    // the 5-minute weather poll. maybePlayVoice() no-ops unless one is due.
+    setInterval(maybePlayVoice, VOICE_TICK_MS);
 
     // "The State of It": expose the debug API, then fetch the mood once at boot.
     // The Worker caches it ~3h, so this and the 30-min poll below are cheap.
