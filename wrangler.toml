@@ -16,3 +16,12 @@ compatibility_date = "2025-01-01"
 [assets]
 directory = "."
 binding = "ASSETS"
+
+# Rolling baseline log for "The State of It" (see BACKEND_NOTES.md).
+# Holds one small JSON array under the key "mood:history" — about 8 readings a
+# day, pruned to a 14-day window. Not secret, and safe to lose: if the log is
+# empty or this binding is removed, /api/mood just falls back to its old
+# absolute label until the baseline warms up again.
+[[kv_namespaces]]
+binding = "MOOD_LOG"
+id = "3d1e5d0a010e4ac99bfa990ff81efa1b"
