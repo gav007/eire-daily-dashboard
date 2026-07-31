@@ -11,7 +11,9 @@ https://eire-daily-dashboard.gav-s-may.workers.dev
 - Provides live Irish headlines at `/api/news`.
 - Provides live Dublin weather at `/api/weather` using Open-Meteo.
 - Provides `/api/health` for a quick uptime check.
-- Provides `/api/mood` for "The State of It", a small Gemini-powered news mood gauge.
+- Provides `/api/mood` for "The State of It", a small Gemini-powered news mood gauge,
+  scored against a rolling 14-day baseline so the reading actually moves.
+- Provides `/api/mood/history` to inspect that baseline as it fills up.
 - Falls back quietly in the browser so the kiosk does not look broken if an API call fails.
 
 ## Useful commands

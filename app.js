@@ -197,6 +197,7 @@
   var stateLabel = $("stateLabel");
   var stateScore = $("stateScore");
   var stateBreakdown = $("stateBreakdown");
+  var stateBaseline = $("stateBaseline");
   var stateWeight = $("stateWeight");
 
   /* ---------- Helpers ---------- */
@@ -609,9 +610,28 @@
   }
 
   function moodTone(label) {
+    // Absolute bands (used during baseline warm-up).
     if (label === "Bright enough" || label === "Grand-ish") return "tone-bright";
     if (label === "Mixed bag") return "tone-mixed";
-    return "tone-heavy"; // Bit heavy / Grim enough / Full doom scroll
+    // Relative bands (used once the baseline is ready).
+    if (label === "Grand for once" || label === "Lighter than usual") return "tone-bright";
+    if (label === "About normal") return "tone-mixed";
+    return "tone-heavy"; // Bit heavy / Grim enough / Heavier than usual / …
+  }
+
+  /* Third line of the gauge: today's place in the trailing window, or how far
+     the baseline still has to warm up. */
+  function baselineLine(m) {
+    if (m.relative && typeof m.relative.percentile === "number") {
+      var p = m.relative.percentile;
+      var d = m.relative.vsMedian;
+      var sign = d > 0 ? "+" : "";
+      return p + "th pct of " + m.baseline.days + "d · " + sign + d + " vs usual";
+    }
+    if (m.baseline && m.baseline.ready === false) {
+      return "Baseline warming up · " + m.baseline.samples + "/" + m.baseline.needed;
+    }
+    return "";
   }
 
   function renderMood(m) {
@@ -620,8 +640,15 @@
       stateEl.style.display = "none"; // quiet fallback: no gauge at all
       return;
     }
-    stateEl.className = "state " + moodTone(m.label);
-    setText(stateLabel, m.label || "—");
+
+    /* Lead with the RELATIVE reading when we have a baseline. The absolute
+       score lands in the same band nearly every day — news is reliably
+       negative — so on its own it reads as broken rather than informative.
+       Until the log warms up we fall back to the old absolute label. */
+    var headline = m.relative && m.relative.label ? m.relative.label : m.label || "—";
+
+    stateEl.className = "state " + moodTone(headline);
+    setText(stateLabel, headline);
     setText(stateScore, "· " + (m.score > 0 ? "+" : "") + m.score);
 
     var c = m.counts || {};
@@ -639,6 +666,8 @@
         "%"
     );
 
+    setText(stateBaseline, baselineLine(m));
+
     var tops = m.topTopics && m.topTopics.length ? m.topTopics.join(" · ") : "—";
     setText(stateWeight, "Main weight: " + tops);
 
@@ -649,6 +678,7 @@
   //   eireMood.refresh()  -> force a fresh Gemini compute now (bypasses 3h cache)
   //   eireMood.reload()   -> re-fetch whatever the Worker currently has cached
   //   eireMood.status()   -> log the latest /api/mood payload (add ?debug=1 detail)
+  //   eireMood.history()  -> log the mood log + current baseline (?days=N)
   function exposeMoodApi() {
     window.eireMood = {
       refresh: function () {
@@ -671,6 +701,20 @@
             console.warn("[eireMood] failed:", e && e.message);
           });
         return "fetching /api/mood?debug=1 — see console";
+      },
+      history: function (days) {
+        fetch(apiUrl(MOOD_ENDPOINT) + "/history" + (days ? "?days=" + days : ""))
+          .then(function (r) {
+            return r.json();
+          })
+          .then(function (h) {
+            console.log("[eireMood] baseline:", h.baseline);
+            console.log("[eireMood] " + h.count + " readings over " + h.days + "d", h.readings);
+          })
+          .catch(function (e) {
+            console.warn("[eireMood] history failed:", e && e.message);
+          });
+        return "fetching /api/mood/history — see console";
       },
     };
   }

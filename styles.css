@@ -390,6 +390,12 @@ body {
 .state-breakdown {
   font-size: 13px; line-height: 1.45; color: #9fb0a8; margin-bottom: 4px;
 }
+/* Where today sits against the trailing baseline, or the warm-up count while
+   the log is still filling. Mono, because it's a stat, not prose. */
+.state-baseline {
+  font-family: "IBM Plex Mono", "Courier New", monospace;
+  font-size: 11.5px; line-height: 1.4; color: #8a9c94; margin-bottom: 4px;
+}
 .state-weight {
   font-size: 12px; line-height: 1.4; color: #6f8079;
 }

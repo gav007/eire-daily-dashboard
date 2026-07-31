@@ -7,6 +7,7 @@ The frontend calls the backend only. It does not fetch RSS, Open-Meteo, or Gemin
 - `/api/news`
 - `/api/weather`
 - `/api/mood`
+- `/api/mood/history`
 - `/api/health`
 
 On browser-side failure, the kiosk falls back quietly so the screen does not look broken.
@@ -191,9 +192,55 @@ Expected successful response shape:
   },
   "topTopics": ["economy", "world", "sport"],
   "heavyCount": 3,
-  "analyzed": 24
+  "analyzed": 24,
+  "baseline": {
+    "ready": true,
+    "samples": 96,
+    "days": 14,
+    "median": -23,
+    "spread": 10.4,
+    "min": -61,
+    "max": 4
+  },
+  "relative": {
+    "z": 0.19,
+    "percentile": 67,
+    "vsMedian": 2,
+    "label": "About normal"
+  }
 }
 ```
+
+### Rolling baseline
+
+The raw `score` is nearly always negative, because news is. Measured against the
+fixed bands in `moodLabel()`, a typical day scores about -20 and lands in "Bit
+heavy" every single time — across the realistic -45..+5 range only three of the
+six labels ever appear, and "Bright enough" and "Full doom scroll" are
+unreachable. The gauge was effectively a constant.
+
+So the Worker logs every score it computes and reports today *relative* to its
+own recent history. `relative.label` is what the dashboard leads with;
+`score` is kept as a secondary readout.
+
+- Log lives in KV under the `MOOD_LOG` binding, key `mood:history`.
+- One reading per genuine recompute — roughly 8 a day at the 3h cache.
+- Baseline is **median + MAD**, not mean + standard deviation. One atrocity day
+  would inflate an SD enough to flatten every reading for the next fortnight.
+- Window is 14 days; the log is pruned by both age and a 400-reading cap.
+- Below 16 samples (about two days) `baseline.ready` is `false`, `relative` is
+  `null`, and the frontend falls back to the old absolute label.
+- **No `MOOD_LOG` binding = no log, no baseline, and `/api/mood` behaves exactly
+  as it did before.** Same graceful-fallback contract as a missing API key.
+
+`GET /api/mood/history` returns the raw log plus the current baseline, so you
+can watch it fill up. `?days=N` narrows the window. Never cached.
+
+In the browser: `eireMood.history()` logs the same thing to the console.
+
+The absolute bands in `moodLabel()` have deliberately **not** been recalibrated
+yet — that needs a fortnight of real readings to do honestly rather than by
+guesswork. Revisit once `/api/mood/history` has a full window.
 
 ## CORS
 

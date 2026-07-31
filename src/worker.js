@@ -70,6 +70,31 @@ const MOOD_STORY_COUNT = 24;              // analyse up to the top 24 stories
 const MOOD_SUMMARY_MAX = 160;             // trim each summary we send to Gemini (less data)
 const MOOD_TIMEOUT_MS = 20000;            // give Gemini up to 20s, then fall back quietly
 
+/* ---------- Rolling baseline for the mood score ----------
+   The raw score is almost always negative, because news is. Measured against
+   the fixed bands in moodLabel() that made the gauge a constant: a typical day
+   scores about -20, which lands in "Bit heavy" every single time, and four of
+   the six labels are unreachable in practice.
+
+   So we log every score we compute and report today RELATIVE to its own recent
+   history — "heavier than usual" beats "negative", because the first one moves
+   and the second one never does.
+
+   The log lives in a KV namespace bound as MOOD_LOG. If that binding is absent
+   the whole feature degrades quietly: no log, no baseline, and /api/mood keeps
+   returning exactly what it returns today. Same graceful-fallback contract as
+   a missing GEMINI_API_KEY. */
+const MOOD_HISTORY_KEY = "mood:history";  // single KV key holding the whole log
+const MOOD_BASELINE_DAYS = 14;            // trailing window the baseline is computed over
+const MOOD_HISTORY_MAX = 400;             // hard cap on stored readings (~7 weeks at 8/day)
+// Below this many readings the baseline is not trustworthy, so we report
+// ready:false and the frontend falls back to the raw label. At a 3h cache
+// that's roughly two days of warm-up.
+const MOOD_BASELINE_MIN_SAMPLES = 16;
+// Scale factor that puts MAD on the same footing as a standard deviation for
+// normally-distributed data, so the z-like number reads at a familiar size.
+const MAD_TO_SIGMA = 1.4826;
+
 // Allowed values mirrored in the prompt. Topic list matches the frontend legend.
 const MOOD_TOPICS = ["politics","crime","economy","housing","transport","weather","world","local","sport","culture","other"];
 
@@ -132,6 +157,14 @@ export default {
         return json({ error: "Method not allowed" }, 405);
       }
       return handleMood(request, env, ctx);
+    }
+
+    // Read-only view of the mood log, for checking the baseline is filling up.
+    if (url.pathname === "/api/mood/history") {
+      if (request.method !== "GET") {
+        return json({ error: "Method not allowed" }, 405);
+      }
+      return handleMoodHistory(request, env);
     }
 
     // Not an API route -> let the static asset server handle it.
@@ -389,11 +422,30 @@ async function handleMood(request, env, ctx) {
     const mood = aggregateMood(classifications);
     if (!mood) throw new Error("No usable classifications returned");
 
+    // Baseline is computed from the log as it stands BEFORE today's reading is
+    // added, so the current score is never compared against itself.
+    const history = await loadMoodHistory(env);
+    const baseline = computeBaseline(history);
+    const relative = computeRelative(mood.score, history, baseline);
+
     const payload = Object.assign(
       { available: true, source: "gemini", model: MOOD_MODEL, updatedAt: new Date().toISOString() },
-      mood
+      mood,
+      { baseline: baseline, relative: relative }
     );
     if (debug) payload.stories = classifications;
+
+    // Append after responding — the log is for the NEXT reading's baseline, so
+    // nothing here needs to block the response.
+    ctx.waitUntil(appendMoodReading(env, {
+      t: Date.now(),
+      score: mood.score,
+      avg: mood.avgSentiment,
+      med: mood.medianSentiment,
+      neg: mood.counts ? mood.counts.negative : null,
+      heavy: mood.heavyCount,
+      n: mood.analyzed
+    }));
 
     const response = json(payload, 200, { "Cache-Control": `public, max-age=${MOOD_CACHE_SECONDS}` });
     ctx.waitUntil(cache.put(cacheKey, response.clone()));
@@ -559,6 +611,143 @@ function moodLabel(s) {
   if (s >= -39) return "Bit heavy";
   if (s >= -69) return "Grim enough";
   return "Full doom scroll";
+}
+
+/* ============================================================
+   Mood log + rolling baseline
+   ------------------------------------------------------------
+   Everything below no-ops safely when env.MOOD_LOG is missing.
+   ============================================================ */
+
+/* Read the whole log. Any problem (no binding, unparseable value, wrong shape)
+   returns an empty log rather than throwing — a broken baseline must never take
+   the mood gauge down with it. */
+async function loadMoodHistory(env) {
+  if (!env || !env.MOOD_LOG) return [];
+  try {
+    const raw = await env.MOOD_LOG.get(MOOD_HISTORY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((r) => r && isNumber(r.t) && isNumber(r.score));
+  } catch (e) {
+    console.warn("Mood history read failed:", String(e));
+    return [];
+  }
+}
+
+/* Append one reading and prune. Read-modify-write is not atomic, so two
+   datacentres recomputing in the same instant can cost one reading — harmless
+   at ~8 writes a day, and not worth a Durable Object to avoid. */
+async function appendMoodReading(env, reading) {
+  if (!env || !env.MOOD_LOG) return;
+  try {
+    const history = await loadMoodHistory(env);
+    history.push(reading);
+    await env.MOOD_LOG.put(MOOD_HISTORY_KEY, JSON.stringify(pruneMoodHistory(history)));
+  } catch (e) {
+    // A failed write just means one missing data point. Never surface it.
+    console.warn("Mood history write failed:", String(e));
+  }
+}
+
+/* Keep the log bounded by both age and count, oldest dropped first. */
+function pruneMoodHistory(history) {
+  const cutoff = Date.now() - MOOD_BASELINE_DAYS * 86400000;
+  const fresh = history
+    .filter((r) => r && isNumber(r.t) && r.t >= cutoff)
+    .sort((a, b) => a.t - b.t);
+  return fresh.length > MOOD_HISTORY_MAX ? fresh.slice(-MOOD_HISTORY_MAX) : fresh;
+}
+
+/* Describe the trailing window: where the score normally sits, and how much it
+   normally moves.
+
+   Deliberately median + MAD rather than mean + standard deviation. A single
+   atrocity day is a genuine outlier that would inflate an SD enough to flatten
+   every reading for the following fortnight; the median barely notices it. */
+function computeBaseline(history) {
+  const cutoff = Date.now() - MOOD_BASELINE_DAYS * 86400000;
+  const scores = (history || [])
+    .filter((r) => r && isNumber(r.t) && r.t >= cutoff && isNumber(r.score))
+    .map((r) => r.score);
+
+  if (scores.length < MOOD_BASELINE_MIN_SAMPLES) {
+    return { ready: false, samples: scores.length, needed: MOOD_BASELINE_MIN_SAMPLES, days: MOOD_BASELINE_DAYS };
+  }
+
+  const med = median(scores);
+  const spread = median(scores.map((s) => Math.abs(s - med))) * MAD_TO_SIGMA;
+
+  return {
+    ready: true,
+    samples: scores.length,
+    days: MOOD_BASELINE_DAYS,
+    median: Math.round(med),
+    spread: Math.round(spread * 10) / 10,
+    min: Math.min.apply(null, scores),
+    max: Math.max.apply(null, scores)
+  };
+}
+
+/* Place today's score inside that window: a z-like deviation and a percentile
+   rank. Percentile is the one worth showing a human — "in the bottom 15% of the
+   last fortnight" needs no explanation. */
+function computeRelative(score, history, baseline) {
+  if (!baseline || !baseline.ready || !isNumber(score)) return null;
+
+  const cutoff = Date.now() - MOOD_BASELINE_DAYS * 86400000;
+  const scores = (history || [])
+    .filter((r) => r && isNumber(r.t) && r.t >= cutoff && isNumber(r.score))
+    .map((r) => r.score);
+
+  // A flat log (spread 0) means every reading so far was identical — treat the
+  // deviation as zero rather than dividing by nothing.
+  const z = baseline.spread > 0 ? (score - baseline.median) / baseline.spread : 0;
+
+  const atOrBelow = scores.filter((s) => s <= score).length;
+  const percentile = Math.round((atOrBelow / scores.length) * 100);
+
+  return {
+    z: Math.round(z * 100) / 100,
+    percentile: percentile,
+    vsMedian: Math.round(score - baseline.median),
+    label: relativeLabel(z)
+  };
+}
+
+/* Relative bands. Unlike the absolute ones these are symmetric around the
+   baseline, so every label is genuinely reachable — that was the whole point. */
+function relativeLabel(z) {
+  if (z >= 1.5) return "Grand for once";
+  if (z >= 0.5) return "Lighter than usual";
+  if (z > -0.5) return "About normal";
+  if (z > -1.5) return "Heavier than usual";
+  return "Grim even for us";
+}
+
+/* GET /api/mood/history — inspect the log while the baseline fills up.
+   ?days=N narrows the window. Never cached: the point is to see it change. */
+async function handleMoodHistory(request, env) {
+  if (!env || !env.MOOD_LOG) {
+    return json({ available: false, reason: "no_kv_binding", readings: [] });
+  }
+  const url = new URL(request.url);
+  const days = clampNum(parseInt(url.searchParams.get("days") || "", 10) || MOOD_BASELINE_DAYS, 1, 60);
+  const cutoff = Date.now() - days * 86400000;
+
+  const history = await loadMoodHistory(env);
+  const readings = history
+    .filter((r) => r.t >= cutoff)
+    .map((r) => Object.assign({ at: new Date(r.t).toISOString() }, r));
+
+  return json({
+    available: true,
+    days: days,
+    count: readings.length,
+    baseline: computeBaseline(history),
+    readings: readings
+  }, 200, { "Cache-Control": "no-store" });
 }
 
 function median(nums) {
