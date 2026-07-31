@@ -40,20 +40,23 @@
 
   /* Dublin voice clips (V1) — a SECOND audio layer that plays on TOP of the
      ambience (the ambience above is never paused or replaced). Short one-shot
-     clips that play at most once every VOICE_GAP_MIN minutes, only 08:00–21:59,
-     never at night, and never if the ambience sound isn't actually running.
-     Full rules + test helpers are in the "Dublin voice clips" section below. */
+     clips on a fixed timetable — weather on the hour, news on the half hour,
+     08:00–21:59 only, never at night, and never if the ambience sound isn't
+     running. Full rules + test helpers are in the section further down. */
   var VOICE_DIR = "assets/voices/"; // where the one-shot voice WAVs live
   var VOICE_VOLUME = 0.8; // audible over the 0.3 ambience, not blasting
   var VOICE_START_HOUR = 8; // first hour a voice may play (08:00)
   var VOICE_END_HOUR = 22; // stop before this hour (last play 21:00–21:59)
-  // Minutes between clips. Change this one number to make the kiosk chattier or
-  // quieter, or set it live on the tablet with eireVoice.every(20) — no deploy
-  // needed, it persists in localStorage.
-  var VOICE_GAP_MIN = 3;
-  var VOICE_GAP_KEY = "eireVoiceLast"; // localStorage: timestamp of the last play
-  var VOICE_GAP_OVERRIDE_KEY = "eireVoiceGap"; // localStorage: eireVoice.every() override
-  var VOICE_TURN_KEY = "eireVoiceTurn"; // localStorage: weather <-> mood alternation
+  /* Fixed half-hourly timetable — two clips an hour, always in the same order:
+
+       13:00  weather        14:00  weather
+       13:30  news           14:30  news        …and so on
+
+     Each half-hour block fires at most once. The block is claimed in
+     localStorage, so a refresh or a kiosk reload can't replay it. If the tablet
+     was asleep at the boundary, the clip fires at the first opportunity inside
+     that block rather than being skipped entirely. */
+  var VOICE_SLOT_KEY = "eireVoiceSlot"; // localStorage: last half-hour block played
   var VOICE_ROT_PREFIX = "eireVoiceRot:"; // localStorage: per-set rotation index
   var VOICE_TICK_MS = 30000; // how often we check whether a clip is due
 
@@ -582,7 +585,7 @@
       setUpdated(w && w.updatedAt, err);
       lastWeather = w || lastWeather; // remember for ambience + voice selection
       applyAmbience(); // pick + (maybe) play the background track
-      maybePlayVoice(); // and (maybe) play an hourly voice clip on top
+      maybePlayVoice(); // and (maybe) play this half-hour block's clip on top
     });
   }
 
@@ -768,6 +771,7 @@
 
   var ambienceEl = null; // the <audio> element (assigned in init)
   var currentTrack = ""; // filename currently loaded, so we don't restart it
+  var currentTrackHour = null; // clock hour that track was chosen in (hold it for the hour)
   var lastWeather = null; // most recent weather object, for re-picks on refresh
   var lastMood = null; // most recent /api/mood payload, for mood voice picks
   var audioUnlocked = false; // true once playback has actually started
@@ -845,13 +849,33 @@
     document.removeEventListener("keydown", gestureUnlock, true);
   }
 
-  /* Pick the right track for the current weather/time, switch to it if it
-     changed, and (try to) play it. Called after each weather load, so weather
-     changes AND day/night changes are picked up on every 5-minute refresh. */
+  /* Pick the right track and (try to) play it.
+
+     Called after every weather load, i.e. every 5 minutes — but the track is
+     only RE-PICKED once per clock hour. Re-picking on every refresh made the
+     background flap: conditions sitting near a threshold (wind hovering around
+     the 20 km/h line, or the sky flicking between Cloudy and Partly cloudy)
+     would swap the music every five minutes. The weather card still updates on
+     its normal 5-minute cycle; only the audio is held steady.
+
+     A genuine change — rain starting, or nightfall — is picked up at the next
+     hourly checkpoint, which lands within 5 minutes of the hour turning. */
   function applyAmbience() {
     if (!ambienceEl) return;
 
-    var file = pickAmbienceTrack(lastWeather, new Date());
+    var now = new Date();
+    var hourId =
+      now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-" + pad(now.getDate()) + "-" + pad(now.getHours());
+
+    // Already chose a track this hour — leave it looping, just make sure it's
+    // actually playing (the autoplay retry is cheap and idempotent).
+    if (currentTrack && currentTrackHour === hourId) {
+      tryPlayAmbience();
+      return;
+    }
+    currentTrackHour = hourId;
+
+    var file = pickAmbienceTrack(lastWeather, now);
 
     // Only swap the source when the track actually changes, so an unchanged
     // track keeps looping smoothly instead of restarting harshly.
@@ -868,28 +892,30 @@
      paused or replaced — short one-shot Dublin voice clips play alongside it
      through their own <audio id="voice"> element.
 
+     A fixed timetable, two clips an hour:
+       on the hour   WEATHER — rain / frost / wind / sun, else a Dublin filler
+       half past     NEWS    — goodnews / grand / mixed / heavy / grim / doom,
+                               from how today's sentiment compares to the
+                               trailing fortnight
+
      Rules:
-       • at most one clip every VOICE_GAP_MIN minutes
+       • each half-hour block fires at most once, claimed in localStorage so a
+         refresh or kiosk reload can't replay it
        • only 08:00–21:59 (daytime/evening) — never during night mode
-       • the last play time is stored in localStorage, so a page refresh / kiosk
-         reload won't immediately replay
        • only when the ambience sound is actually running (audioUnlocked) AND the
          voice layer isn't muted — so "sound off" means no voice either
+       • if the tablet was asleep at the boundary, the clip fires at the first
+         opportunity inside that block rather than being skipped
 
-     Two families of clip, alternating turn about so you hear both:
-       WEATHER — rain / frost / wind / sun, else a generic Dublin filler
-       MOOD    — goodnews / grand / mixed / heavy / grim / doom, chosen from how
-                 today's news sentiment compares to the trailing fortnight
      Each set rotates through its clips in order and remembers its position, so
      every clip in a set is heard before any of them repeats.
 
      Test without waiting — open the browser console:
-       eireVoice.play()          // play the next clip right now
+       eireVoice.play()          // play what this block would play, now
        eireVoice.test("rain")    // next clip from a set, or an exact filename
        eireVoice.sets()          // list the sets and how many clips each has
-       eireVoice.every(20)       // change the gap to 20 min (saved on the tablet)
-       eireVoice.reset()         // make the next clip due immediately
-       eireVoice.status()        // what it would pick, and why
+       eireVoice.reset()         // let this block fire again
+       eireVoice.status()        // the current block, what it plays, and why
        eireVoice.mute()          // turn the voice layer off (ambience keeps playing)
        eireVoice.unmute()
      …or load the page with ?voicetest=1 for an on-screen button per set. */
@@ -914,10 +940,24 @@
     }
   }
 
-  // How many minutes between clips right now (eireVoice.every() wins if set).
-  function voiceGapMin() {
-    var v = parseFloat(vGet(VOICE_GAP_OVERRIDE_KEY));
-    return isFinite(v) && v > 0 ? v : VOICE_GAP_MIN;
+  /* Which half-hour block we're in, and what should play in it.
+       minute 0–29  -> "weather", block id "<date>-<hour>-0"
+       minute 30–59 -> "news",    block id "<date>-<hour>-1" */
+  function voiceSlot(date) {
+    var half = date.getMinutes() >= 30 ? 1 : 0;
+    return {
+      id:
+        date.getFullYear() +
+        "-" +
+        pad(date.getMonth() + 1) +
+        "-" +
+        pad(date.getDate()) +
+        "-" +
+        pad(date.getHours()) +
+        "-" +
+        half,
+      family: half === 0 ? "weather" : "news",
+    };
   }
 
   /* Take the next clip from a set and advance that set's rotation. Persisting
@@ -977,13 +1017,12 @@
     return VOICE_ABS_LABEL_SETS[mood.label] || null;
   }
 
-  /* Alternate weather -> mood -> weather -> mood so both families get heard.
-     If the mood side isn't available yet, weather covers for it. */
-  function pickVoiceFile() {
-    var wantMood = vGet(VOICE_TURN_KEY) === "mood";
-    var set = wantMood ? moodVoiceSet(lastMood) : null;
+  /* Pick a clip for a given family. The news slot falls back to a weather clip
+     if the mood gauge isn't available at all (no Gemini key, or the API is
+     down) — better a voice than an unexplained silence on the half hour. */
+  function pickVoiceFile(family) {
+    var set = family === "news" ? moodVoiceSet(lastMood) : null;
     if (!set) set = weatherVoiceSet(lastWeather);
-    vSet(VOICE_TURN_KEY, wantMood ? "weather" : "mood");
     return nextFromSet(set);
   }
 
@@ -1004,27 +1043,22 @@
     }
   }
 
-  // Minutes until the next clip is due (0 = due now).
-  function voiceDueInMin() {
-    var last = parseInt(vGet(VOICE_GAP_KEY) || "0", 10);
-    if (!isFinite(last) || last <= 0) return 0;
-    var left = last + voiceGapMin() * 60000 - Date.now();
-    return left <= 0 ? 0 : Math.round((left / 60000) * 10) / 10;
-  }
-
-  // The scheduled gate: enforce the gap / daytime / sound-on rules. Safe to
-  // call as often as we like — it no-ops unless a play is actually due.
+  // The scheduled gate: one clip per half-hour block, daytime only, sound on.
+  // Safe to call as often as we like — it no-ops unless a play is actually due.
   function maybePlayVoice() {
     if (!voiceEl || !voiceEnabled) return;
     if (!audioUnlocked) return; // ambience isn't running -> sound is "off"
 
-    var hour = new Date().getHours();
+    var d = new Date();
+    var hour = d.getHours();
     if (hour < VOICE_START_HOUR || hour >= VOICE_END_HOUR) return; // night / too early
-    if (voiceDueInMin() > 0) return; // played too recently (survives refresh)
 
-    var file = pickVoiceFile();
+    var slot = voiceSlot(d);
+    if (vGet(VOICE_SLOT_KEY) === slot.id) return; // this block already played
+
+    var file = pickVoiceFile(slot.family);
     if (!file) return;
-    vSet(VOICE_GAP_KEY, "" + Date.now()); // claim the slot BEFORE playing (no double-fire)
+    vSet(VOICE_SLOT_KEY, slot.id); // claim the block BEFORE playing (no double-fire)
     playVoiceFile(file);
   }
 
@@ -1035,7 +1069,7 @@
   /* voiceTest("rain") plays the next clip from a set; voiceTest("rain3.wav")
      plays that exact file. Passing nothing plays whatever is currently due. */
   function voiceTest(which) {
-    if (!which) return playVoiceFile(pickVoiceFile());
+    if (!which) return playVoiceFile(pickVoiceFile(voiceSlot(new Date()).family));
     if (VOICE_SETS[which]) return playVoiceFile(nextFromSet(which));
     playVoiceFile(/\.wav$/i.test(which) ? which : which + ".wav");
   }
@@ -1043,8 +1077,8 @@
   function exposeVoiceApi() {
     window.eireVoice = {
       play: function () {
-        playVoiceFile(pickVoiceFile());
-      }, // whatever is next in the rotation, now
+        playVoiceFile(pickVoiceFile(voiceSlot(new Date()).family));
+      }, // whatever this half-hour block would play, now
       test: voiceTest, // a named set or exact filename, now
       sets: function () {
         var out = {};
@@ -1053,18 +1087,9 @@
         }
         return out;
       },
-      every: function (minutes) {
-        var n = parseFloat(minutes);
-        if (!isFinite(n) || n <= 0) {
-          vSet(VOICE_GAP_OVERRIDE_KEY, "");
-          return "gap reset to the built-in " + VOICE_GAP_MIN + " min";
-        }
-        vSet(VOICE_GAP_OVERRIDE_KEY, "" + n);
-        return "a clip every " + n + " min (saved on this tablet)";
-      },
       reset: function () {
-        vSet(VOICE_GAP_KEY, "");
-        return "gap cleared — next clip is due now";
+        vSet(VOICE_SLOT_KEY, "");
+        return "block cleared — this half-hour's clip will fire again";
       },
       mute: function () {
         voiceEnabled = false;
@@ -1076,12 +1101,13 @@
       },
       status: function () {
         var d = new Date();
+        var slot = voiceSlot(d);
         return {
-          hour: d.getHours(),
+          time: pad(d.getHours()) + ":" + pad(d.getMinutes()),
           inWindow: d.getHours() >= VOICE_START_HOUR && d.getHours() < VOICE_END_HOUR,
-          gapMin: voiceGapMin(),
-          dueInMin: voiceDueInMin(),
-          nextFamily: vGet(VOICE_TURN_KEY) === "mood" ? "mood" : "weather",
+          block: slot.id,
+          blockPlays: slot.family,
+          blockDone: vGet(VOICE_SLOT_KEY) === slot.id,
           weatherSet: weatherVoiceSet(lastWeather),
           moodSet: moodVoiceSet(lastMood),
           audioUnlocked: audioUnlocked,
