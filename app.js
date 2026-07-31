@@ -20,13 +20,15 @@
   var AMBIENCE_VOLUMES = {
     "background-peace.mp3": 1,
     "day-clear.mp3": 1, // the quiet default track — boosted so it's audible
-    "MidnightDone.mp3": 0.8, // evening track — level dialled in on the tablet
+    "MidnightDone.mp3": 0.8, // kept for the retired evening track (see below)
   };
   var WIND_VERY_KMH = 30; // "very windy" threshold
   var WIND_MOD_KMH = 20; // "windy" threshold
   // Which MP3 plays for each weather/time situation.
+  // Retired: `evening: "MidnightDone.mp3"` used to hijack 18:00–21:59 and play
+  // regardless of the weather. The evening now follows the weather like every
+  // other part of the day. The file is still in assets/audio/ if it's wanted back.
   var AMBIENCE_TRACKS = {
-    evening: "MidnightDone.mp3", // 18:00–21:59 — plays regardless of weather
     rain: "rain.mp3", // any rain / drizzle / thunder
     veryWindy: "windy-beach.mp3", // windSpeed >= 35
     windy: "soft-wind.mp3", // windSpeed >= 20
@@ -38,13 +40,13 @@
 
   /* Dublin voice clips (V1) — a SECOND audio layer that plays on TOP of the
      ambience (the ambience above is never paused or replaced). Short one-shot
-     clips that play at most ONCE per hour, only 08:00–20:59, never at night,
-     and never if the ambience sound isn't actually running. Full rules + test
-     helpers are in the "Dublin voice clips" section lower down. */
+     clips that play at most once every VOICE_GAP_MIN minutes, only 08:00–21:59,
+     never at night, and never if the ambience sound isn't actually running.
+     Full rules + test helpers are in the "Dublin voice clips" section below. */
   var VOICE_DIR = "assets/voices/"; // where the one-shot voice WAVs live
   var VOICE_VOLUME = 0.8; // audible over the 0.3 ambience, not blasting
   var VOICE_START_HOUR = 8; // first hour a voice may play (08:00)
-  var VOICE_END_HOUR = 21; // stop before this hour (last play 20:00–20:59)
+  var VOICE_END_HOUR = 22; // stop before this hour (last play 21:00–21:59)
   // Minutes between clips. Change this one number to make the kiosk chattier or
   // quieter, or set it live on the tablet with eireVoice.every(20) — no deploy
   // needed, it persists in localStorage.
@@ -782,13 +784,14 @@
       cond.indexOf("rain") !== -1 || // Rain / Heavy rain
       cond.indexOf("drizzle") !== -1 ||
       cond.indexOf("thunder") !== -1;
-    var isEvening = hour >= 18 && hour < 22; // 18:00–21:59
     var isNight = hour >= 22 || hour < 6;
     var isMorning = hour >= 6 && hour < 11;
     var isClearish = cond === "clear" || cond === "partly cloudy";
 
-    // Evening wins outright (6pm–10pm) — plays regardless of weather.
-    if (isEvening) return AMBIENCE_TRACKS.evening; // 0
+    // No evening override any more — 18:00–21:59 now follows the same
+    // weather-driven rules as the rest of the day. (To bring the old fixed
+    // evening track back, re-add an `evening` entry to AMBIENCE_TRACKS and
+    // return it here for hour >= 18 && hour < 22.)
     if (isRainy) return AMBIENCE_TRACKS.rain; // 1
     if (wind >= WIND_VERY_KMH) return AMBIENCE_TRACKS.veryWindy; // 2
     if (wind >= WIND_MOD_KMH) return AMBIENCE_TRACKS.windy; // 3
@@ -867,7 +870,7 @@
 
      Rules:
        • at most one clip every VOICE_GAP_MIN minutes
-       • only 08:00–20:59 (daytime/evening) — never during night mode
+       • only 08:00–21:59 (daytime/evening) — never during night mode
        • the last play time is stored in localStorage, so a page refresh / kiosk
          reload won't immediately replay
        • only when the ambience sound is actually running (audioUnlocked) AND the
