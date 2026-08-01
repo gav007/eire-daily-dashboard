@@ -71,9 +71,28 @@
     // Weather
     rain: ["rain1.wav", "rain2.wav", "rain3.wav", "rain4.wav", "rain5.wav", "rain6.wav"],
     frost: ["frost1.wav", "frost2.wav"], // snow, or genuinely cold
-    sun: ["sun1.wav", "sun2.wav", "sun3.wav", "sun4.wav", "sun5.wav"],
-    wind: ["wind.wav"], // only the one wind clip so far
-    dublin: ["default_dublin1.wav", "default_dublin2.wav"], // generic filler
+    sun: ["sun1.wav", "sun2.wav", "sun3.wav", "sun4.wav", "sun5.wav"], // properly clear
+    wind: [
+      "wind.wav",
+      "wind1.wav",
+      "wind2.wav",
+      "wind3.wav",
+      "wind4.wav",
+      "wind5.wav",
+      "wind6.wav",
+      "wind7.wav",
+    ],
+    // Overcast / fog — the most common Dublin weather there is.
+    cloudy: [
+      "cloud1.wav",
+      "cloud2.wav",
+      "cloud3.wav",
+      "cloud4.wav",
+      "default_dublin1.wav",
+      "default_dublin2.wav",
+    ],
+    // Partly cloudy — a bit of sun about, but not a clear day.
+    partly: ["some_sun1.wav", "normal1.wav", "normal2.wav"],
 
     // Mood — one set per sentiment tier, brightest first
     goodnews: ["goodnews1.wav", "goodnews2.wav", "goodnews3.wav"],
@@ -992,7 +1011,11 @@
     ) {
       return "sun";
     }
-    return "dublin"; // cloudy / fog / anything else
+    // "Partly cloudy" gets its own set — there IS some sun about, so the fully
+    // overcast clips would be wrong. Checked before `cloudy` because the
+    // condition string contains "cloudy" either way.
+    if (cond.indexOf("partly") !== -1) return "partly";
+    return "cloudy"; // overcast / fog / anything else
   }
 
   /* Which MOOD set fits the current news sentiment.
