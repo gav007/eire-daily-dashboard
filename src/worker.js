@@ -703,10 +703,12 @@ function buildHeadlineLine(item) {
   if (title.length > TTS_TITLE_MAX) {
     title = title.slice(0, TTS_TITLE_MAX - 1).replace(/\s+\S*$/, "") + "…";
   }
-  // Strip a trailing full stop so we don't end up with two.
-  title = title.replace(/[.\s]+$/, "");
+  // Only add a full stop if the headline doesn't already end in punctuation —
+  // plenty of them end in "?" and "Butterflies?." reads badly aloud.
+  title = title.replace(/\s+$/, "");
+  if (!/[.!?…]$/.test(title)) title += ".";
   const source = item.source ? String(item.source).trim() : "";
-  return (source ? "Top story from " + source + ". " : "Top story. ") + title + ".";
+  return (source ? "Top story from " + source + ". " : "Top story. ") + title;
 }
 
 async function synthesizeSpeech(line, apiKey) {
