@@ -40,23 +40,28 @@
 
   /* Dublin voice clips (V1) — a SECOND audio layer that plays on TOP of the
      ambience (the ambience above is never paused or replaced). Short one-shot
-     clips on a fixed timetable — weather on the hour, news on the half hour,
-     08:00–21:59 only, never at night, and never if the ambience sound isn't
-     running. Full rules + test helpers are in the section further down. */
+     clips on a fixed timetable — weather and news alternating every
+     VOICE_BLOCK_MIN minutes, 08:00–21:59 only, never at night, and never if the
+     ambience sound isn't running. Full rules + tests in the section below. */
   var VOICE_DIR = "assets/voices/"; // where the one-shot voice WAVs live
   var VOICE_VOLUME = 0.8; // audible over the 0.3 ambience, not blasting
   var VOICE_START_HOUR = 8; // first hour a voice may play (08:00)
   var VOICE_END_HOUR = 22; // stop before this hour (last play 21:00–21:59)
-  /* Fixed half-hourly timetable — two clips an hour, always in the same order:
+  /* Fixed timetable, alternating weather and news:
 
-       13:00  weather        14:00  weather
-       13:30  news           14:30  news        …and so on
+       13:00 weather   13:15 news   13:30 weather   13:45 news   …
 
-     Each half-hour block fires at most once. The block is claimed in
-     localStorage, so a refresh or a kiosk reload can't replay it. If the tablet
-     was asleep at the boundary, the clip fires at the first opportunity inside
-     that block rather than being skipped entirely. */
-  var VOICE_SLOT_KEY = "eireVoiceSlot"; // localStorage: last half-hour block played
+     VOICE_BLOCK_MIN is the only dial. 15 = four clips an hour (the current
+     setting), 30 = two an hour, 60 = one. It must divide 60 evenly, and it
+     should stay an even division so the weather/news alternation lines up the
+     same way every hour.
+
+     Each block fires at most once and is claimed in localStorage, so a refresh
+     or kiosk reload can't replay it. If the tablet was asleep at the boundary
+     the clip still fires at the first opportunity inside that block rather
+     than being skipped. */
+  var VOICE_BLOCK_MIN = 15;
+  var VOICE_SLOT_KEY = "eireVoiceSlot"; // localStorage: last block played
   var VOICE_ROT_PREFIX = "eireVoiceRot:"; // localStorage: per-set rotation index
   var VOICE_TICK_MS = 30000; // how often we check whether a clip is due
 
@@ -911,14 +916,15 @@
      paused or replaced — short one-shot Dublin voice clips play alongside it
      through their own <audio id="voice"> element.
 
-     A fixed timetable, two clips an hour:
-       on the hour   WEATHER — rain / frost / wind / sun, else a Dublin filler
-       half past     NEWS    — goodnews / grand / mixed / heavy / grim / doom,
+     A fixed timetable alternating two families of clip, every
+     VOICE_BLOCK_MIN minutes (15 = four an hour):
+       even blocks   WEATHER — rain / frost / wind / sun / partly / cloudy
+       odd blocks    NEWS    — goodnews / grand / mixed / heavy / grim / doom,
                                from how today's sentiment compares to the
                                trailing fortnight
 
      Rules:
-       • each half-hour block fires at most once, claimed in localStorage so a
+       • each block fires at most once, claimed in localStorage so a
          refresh or kiosk reload can't replay it
        • only 08:00–21:59 (daytime/evening) — never during night mode
        • only when the ambience sound is actually running (audioUnlocked) AND the
@@ -959,11 +965,11 @@
     }
   }
 
-  /* Which half-hour block we're in, and what should play in it.
-       minute 0–29  -> "weather", block id "<date>-<hour>-0"
-       minute 30–59 -> "news",    block id "<date>-<hour>-1" */
+  /* Which block of the hour we're in, and what should play in it. Even-numbered
+     blocks are weather, odd are news — so at 15-minute blocks that's
+     weather / news / weather / news across the hour. */
   function voiceSlot(date) {
-    var half = date.getMinutes() >= 30 ? 1 : 0;
+    var idx = Math.floor(date.getMinutes() / VOICE_BLOCK_MIN);
     return {
       id:
         date.getFullYear() +
@@ -974,8 +980,8 @@
         "-" +
         pad(date.getHours()) +
         "-" +
-        half,
-      family: half === 0 ? "weather" : "news",
+        idx,
+      family: idx % 2 === 0 ? "weather" : "news",
     };
   }
 
