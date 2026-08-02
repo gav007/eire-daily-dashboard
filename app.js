@@ -147,6 +147,10 @@
   var NEWS_ENDPOINT = "/api/news";
   var WEATHER_ENDPOINT = "/api/weather";
   var MOOD_ENDPOINT = "/api/mood"; // "The State of It" AI news-mood (Worker-side Gemini)
+  // The top story read aloud by Gemini, served as a WAV by the Worker. If it's
+  // unavailable for any reason the news slot quietly plays a recorded clip.
+  var HEADLINE_ENDPOINT = "/api/headline-audio";
+  var NEWS_TURN_KEY = "eireNewsTurn"; // localStorage: headline <-> recorded clip
   var MOOD_REFRESH_MS = 30 * 60 * 1000; // re-poll mood every 30 min (Worker caches it ~3h)
 
   /* Stock Dublin image, used when an article has no image OR its image fails to
@@ -938,9 +942,11 @@
      A fixed timetable alternating two families of clip, every
      VOICE_BLOCK_MIN minutes (15 = four an hour):
        even blocks   WEATHER — rain / frost / wind / sun / partly / cloudy
-       odd blocks    NEWS    — goodnews / grand / mixed / heavy / grim / doom,
-                               from how today's sentiment compares to the
-                               trailing fortnight
+       odd blocks    NEWS    — alternating between the REAL top headline read
+                               aloud by Gemini, and one of the recorded mood
+                               clips (goodnews / grand / mixed / heavy / grim /
+                               doom, from how today's sentiment compares to the
+                               trailing fortnight)
 
      Rules:
        • each block fires at most once, claimed in localStorage so a
@@ -957,6 +963,8 @@
      Test without waiting — open the browser console:
        eireVoice.play()          // play what this block would play, now
        eireVoice.test("rain")    // next clip from a set, or an exact filename
+       eireVoice.headline()      // read the current top story aloud, now
+       eireVoice.says()          // print what it would read, without generating
        eireVoice.sets()          // list the sets and how many clips each has
        eireVoice.reset()         // let this block fire again
        eireVoice.status()        // the current block, what it plays, and why
@@ -1078,6 +1086,7 @@
   // so the background loop keeps going underneath the voice.
   function playVoiceFile(file) {
     if (!voiceEl || !file) return;
+    voiceEl.onerror = null; // clear any fallback armed by the headline player
     voiceEl.src = VOICE_DIR + file;
     voiceEl.volume = VOICE_VOLUME;
     try {
@@ -1087,6 +1096,40 @@
     if (p && p.catch) {
       p.catch(function (e) {
         console.warn("Voice clip blocked (needs a tap first?):", e && e.message);
+      });
+    }
+  }
+
+  /* The news slot alternates between the REAL headline read aloud and one of
+     the recorded mood clips, so you get both the substance and the character.
+     The alternation is persisted, so it survives a refresh. */
+  function playNewsVoice() {
+    var wantHeadline = vGet(NEWS_TURN_KEY) !== "clip";
+    vSet(NEWS_TURN_KEY, wantHeadline ? "clip" : "headline");
+    if (wantHeadline) return playHeadlineAudio();
+    playVoiceFile(pickVoiceFile("news"));
+  }
+
+  /* Stream the spoken headline from the Worker. Anything that goes wrong —
+     no Gemini key, rate limit, outage — makes the <audio> element fire an
+     error, and we quietly drop back to a recorded clip. The kiosk must never
+     just go silent because a cloud service had a bad minute. */
+  function playHeadlineAudio() {
+    if (!voiceEl) return;
+    voiceEl.onerror = function () {
+      voiceEl.onerror = null;
+      console.warn("Headline audio unavailable — using a recorded clip instead");
+      playVoiceFile(pickVoiceFile("news"));
+    };
+    voiceEl.src = apiUrl(HEADLINE_ENDPOINT);
+    voiceEl.volume = VOICE_VOLUME;
+    try {
+      voiceEl.currentTime = 0;
+    } catch (e) {}
+    var p = voiceEl.play();
+    if (p && p.catch) {
+      p.catch(function (e) {
+        console.warn("Headline blocked (needs a tap first?):", e && e.message);
       });
     }
   }
@@ -1104,9 +1147,15 @@
     var slot = voiceSlot(d);
     if (vGet(VOICE_SLOT_KEY) === slot.id) return; // this block already played
 
-    var file = pickVoiceFile(slot.family);
+    if (slot.family === "news") {
+      vSet(VOICE_SLOT_KEY, slot.id); // claim the block BEFORE playing (no double-fire)
+      playNewsVoice();
+      return;
+    }
+
+    var file = pickVoiceFile("weather");
     if (!file) return;
-    vSet(VOICE_SLOT_KEY, slot.id); // claim the block BEFORE playing (no double-fire)
+    vSet(VOICE_SLOT_KEY, slot.id);
     playVoiceFile(file);
   }
 
@@ -1128,6 +1177,23 @@
         playVoiceFile(pickVoiceFile(voiceSlot(new Date()).family));
       }, // whatever this half-hour block would play, now
       test: voiceTest, // a named set or exact filename, now
+      headline: function () {
+        playHeadlineAudio();
+        return "fetching + playing the spoken headline…";
+      },
+      says: function () {
+        fetch(apiUrl(HEADLINE_ENDPOINT) + "?text=1")
+          .then(function (r) {
+            return r.json();
+          })
+          .then(function (d) {
+            console.log("[eireVoice] would say:", d.line, "(voice: " + d.voice + ")");
+          })
+          .catch(function (e) {
+            console.warn("[eireVoice] says failed:", e && e.message);
+          });
+        return "checking what it would read out — see console";
+      },
       sets: function () {
         var out = {};
         for (var k in VOICE_SETS) {
@@ -1191,6 +1257,12 @@
         "Pick now",
         function () {
           window.eireVoice.play();
+        },
+      ],
+      [
+        "★ Headline",
+        function () {
+          playHeadlineAudio();
         },
       ],
     ];

@@ -95,6 +95,26 @@ const MOOD_BASELINE_MIN_SAMPLES = 16;
 // normally-distributed data, so the z-like number reads at a familiar size.
 const MAD_TO_SIGMA = 1.4826;
 
+/* ---------- Spoken headline (Gemini text-to-speech) ----------
+   /api/headline-audio returns a WAV of the current top story read aloud, so
+   the kiosk can say the actual news rather than only how it feels.
+
+   Gemini hands back RAW PCM with no container — a browser won't play that, so
+   we bolt a 44-byte WAV header on before serving it.
+
+   Generation is the expensive part, so each line is generated ONCE and cached
+   in KV keyed by a hash of the text. The headline only changes every so often,
+   so in practice this is a handful of calls a day no matter how often the
+   kiosk plays it. Cached entries self-delete after TTS_CACHE_TTL. */
+const TTS_MODEL = "gemini-3.1-flash-tts-preview";
+const TTS_VOICE = "Charon"; // 30 available; Charon is a clear, informative read
+const TTS_URL =
+  "https://generativelanguage.googleapis.com/v1beta/models/" + TTS_MODEL + ":generateContent";
+const TTS_CACHE_PREFIX = "tts:";     // shares the MOOD_LOG namespace, separate key space
+const TTS_CACHE_TTL = 6 * 60 * 60;   // drop cached audio after ~6h
+const TTS_TIMEOUT_MS = 30000;        // voice generation is slower than text
+const TTS_TITLE_MAX = 240;           // keep the spoken line short
+
 // Allowed values mirrored in the prompt. Topic list matches the frontend legend.
 const MOOD_TOPICS = ["politics","crime","economy","housing","transport","weather","world","local","sport","culture","other"];
 
@@ -157,6 +177,13 @@ export default {
         return json({ error: "Method not allowed" }, 405);
       }
       return handleMood(request, env, ctx);
+    }
+
+    if (url.pathname === "/api/headline-audio") {
+      if (request.method !== "GET") {
+        return json({ error: "Method not allowed" }, 405);
+      }
+      return handleHeadlineAudio(request, env, ctx);
     }
 
     // Read-only view of the mood log, for checking the baseline is filling up.
@@ -611,6 +638,195 @@ function moodLabel(s) {
   if (s >= -39) return "Bit heavy";
   if (s >= -69) return "Grim enough";
   return "Full doom scroll";
+}
+
+/* ============================================================
+   /api/headline-audio  —  the top story, read aloud
+   ------------------------------------------------------------
+   ?text=1 returns the line as JSON instead of audio (handy for
+           checking what it would say without burning a generation)
+   ============================================================ */
+async function handleHeadlineAudio(request, env, ctx) {
+  const url = new URL(request.url);
+  const apiKey = env && env.GEMINI_API_KEY;
+
+  const items = await getNewsItems(request);
+  const top = (items || [])[0];
+  if (!top || !top.title) {
+    return json({ available: false, reason: "no_news" }, 503);
+  }
+
+  const line = buildHeadlineLine(top);
+  if (url.searchParams.get("text") === "1") {
+    return json({ available: !!apiKey, voice: TTS_VOICE, model: TTS_MODEL, line: line });
+  }
+  // No key -> tell the caller plainly. The frontend treats any non-audio
+  // response as "fall back to a recorded clip".
+  if (!apiKey) return json({ available: false, reason: "no_key" }, 503);
+
+  const cacheKey = TTS_CACHE_PREFIX + hashText(line + "|" + TTS_VOICE + "|" + TTS_MODEL);
+
+  // Already generated this exact line? Serve it straight back.
+  if (env.MOOD_LOG) {
+    try {
+      const hit = await env.MOOD_LOG.get(cacheKey, "arrayBuffer");
+      if (hit && hit.byteLength > 44) return wavResponse(hit, "HIT");
+    } catch (e) {
+      console.warn("TTS cache read failed:", String(e));
+    }
+  }
+
+  try {
+    const wav = await synthesizeSpeech(line, apiKey);
+    if (env.MOOD_LOG) {
+      // Store after responding — a failed write only costs one regeneration.
+      ctx.waitUntil(
+        env.MOOD_LOG.put(cacheKey, wav, { expirationTtl: TTS_CACHE_TTL }).catch((e) =>
+          console.warn("TTS cache write failed:", String(e))
+        )
+      );
+    }
+    return wavResponse(wav, "MISS");
+  } catch (err) {
+    console.warn("TTS failed:", String(err));
+    return json(
+      { available: false, reason: "tts_error", detail: String((err && err.message) || err).slice(0, 200) },
+      503
+    );
+  }
+}
+
+/* The sentence the newsreader actually says. Kept short: one source, one
+   headline, no summary — a kiosk voice line, not a bulletin. */
+function buildHeadlineLine(item) {
+  let title = String(item.title || "").trim().replace(/\s+/g, " ");
+  if (title.length > TTS_TITLE_MAX) {
+    title = title.slice(0, TTS_TITLE_MAX - 1).replace(/\s+\S*$/, "") + "…";
+  }
+  // Strip a trailing full stop so we don't end up with two.
+  title = title.replace(/[.\s]+$/, "");
+  const source = item.source ? String(item.source).trim() : "";
+  return (source ? "Top story from " + source + ". " : "Top story. ") + title + ".";
+}
+
+async function synthesizeSpeech(line, apiKey) {
+  const body = {
+    contents: [
+      {
+        parts: [
+          {
+            // The style instruction is part of the prompt for Gemini TTS.
+            text: "Read this aloud as a calm Irish radio newsreader — unhurried, clear, no drama:\n\n" + line,
+          },
+        ],
+      },
+    ],
+    generationConfig: {
+      responseModalities: ["AUDIO"],
+      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: TTS_VOICE } } },
+    },
+  };
+
+  const res = await fetch(TTS_URL, {
+    method: "POST",
+    signal: AbortSignal.timeout(TTS_TIMEOUT_MS),
+    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error("TTS HTTP " + res.status + (errText ? ": " + errText.slice(0, 200) : ""));
+  }
+
+  const data = await res.json();
+  const part =
+    data &&
+    data.candidates &&
+    data.candidates[0] &&
+    data.candidates[0].content &&
+    data.candidates[0].content.parts &&
+    data.candidates[0].content.parts.find((p) => p && p.inlineData && p.inlineData.data);
+
+  if (!part) throw new Error("TTS returned no audio");
+
+  const pcm = base64ToBytes(part.inlineData.data);
+  if (!pcm.byteLength) throw new Error("TTS returned empty audio");
+
+  // Gemini documents 24kHz/mono/16-bit, and states the rate in the mimeType
+  // (e.g. "audio/L16;codec=pcm;rate=24000"). Read it rather than assume, so a
+  // change upstream doesn't silently play everything at the wrong pitch.
+  const rate = parseRateFromMime(part.inlineData.mimeType) || 24000;
+  return pcmToWav(pcm, rate, 1, 16);
+}
+
+function parseRateFromMime(mime) {
+  const m = /rate=(\d+)/i.exec(String(mime || ""));
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+function base64ToBytes(b64) {
+  const bin = atob(String(b64 || ""));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+/* Wrap raw PCM in a standard 44-byte RIFF/WAVE header. Without this the
+   browser has no idea what the bytes are and refuses to play them. */
+function pcmToWav(pcm, sampleRate, channels, bitsPerSample) {
+  const blockAlign = (channels * bitsPerSample) / 8;
+  const byteRate = sampleRate * blockAlign;
+  const buf = new ArrayBuffer(44 + pcm.byteLength);
+  const dv = new DataView(buf);
+  let o = 0;
+  const ascii = (s) => {
+    for (let i = 0; i < s.length; i++) dv.setUint8(o++, s.charCodeAt(i));
+  };
+
+  ascii("RIFF");
+  dv.setUint32(o, 36 + pcm.byteLength, true); o += 4;
+  ascii("WAVE");
+  ascii("fmt ");
+  dv.setUint32(o, 16, true); o += 4;   // PCM chunk size
+  dv.setUint16(o, 1, true);  o += 2;   // format 1 = uncompressed PCM
+  dv.setUint16(o, channels, true); o += 2;
+  dv.setUint32(o, sampleRate, true); o += 4;
+  dv.setUint32(o, byteRate, true); o += 4;
+  dv.setUint16(o, blockAlign, true); o += 2;
+  dv.setUint16(o, bitsPerSample, true); o += 2;
+  ascii("data");
+  dv.setUint32(o, pcm.byteLength, true); o += 4;
+  new Uint8Array(buf, 44).set(pcm);
+  return buf;
+}
+
+function wavResponse(buf, cacheState) {
+  return new Response(buf, {
+    status: 200,
+    headers: Object.assign(
+      {
+        "Content-Type": "audio/wav",
+        "Content-Length": String(buf.byteLength),
+        // The line changes with the headline, so let the browser reuse it only
+        // briefly — the Worker-side KV cache is what actually saves the money.
+        "Cache-Control": "public, max-age=600",
+        "X-TTS-Cache": cacheState,
+      },
+      corsHeaders()
+    ),
+  });
+}
+
+/* Small stable hash (FNV-1a) for cache keys — not security, just a short
+   deterministic id for a given line of text. */
+function hashText(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+  }
+  return h.toString(16);
 }
 
 /* ============================================================
