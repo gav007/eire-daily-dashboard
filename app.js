@@ -102,7 +102,26 @@
     // Mood — one set per sentiment tier, brightest first
     goodnews: ["goodnews1.wav", "goodnews2.wav", "goodnews3.wav"],
     grand: ["grand1.wav", "grand2.wav", "grand3.wav"],
-    mixed: ["mixed1.wav", "mixed2.wav", "mixed3.wav"],
+    // Biggest set by design: normalising the score means most days land on
+    // "about normal", so this one comes up roughly 38% of the time.
+    mixed: [
+      "mixed1.wav",
+      "mixed2.wav",
+      "mixed3.wav",
+      "mixed4.wav",
+      "mixed5.wav",
+      "mixed6.wav",
+      "mixed7.wav",
+      "mixed8.wav",
+      "mixed9.wav",
+      "mixed10.wav",
+      "mixed11.wav",
+      "mixed12.wav",
+      "mixed13.wav",
+      "mixed14.wav",
+      "mixed15.wav",
+      "mixed16.wav",
+    ],
     heavy: ["heavy1.wav", "heavy2.wav", "heavy3.wav"],
     grim: ["grim1.wav", "grim2.wav", "grim3.wav"],
     doom: ["doom1.wav", "doom2.wav", "doom3.wav"],
