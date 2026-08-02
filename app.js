@@ -705,17 +705,37 @@
     return "tone-heavy"; // Bit heavy / Grim enough / Heavier than usual / …
   }
 
-  /* Third line of the gauge: today's place in the trailing window, or how far
-     the baseline still has to warm up. */
+  /* The headline number, rephrased for a human.
+
+     The raw score is a sentiment average from -100 to +100, and because news
+     is relentlessly negative it is ALWAYS a minus — a perfectly ordinary day
+     reads "-31", which tells a passer-by nothing and looks alarming.
+
+     So the screen shows the percentile instead: 0-100, where 50 is a typical
+     day and higher is better news. Same information, no minus signs, and it
+     needs no explaining. The raw score is still what the Worker logs and does
+     the maths on — this is purely how it's presented. */
+  function moodOutOf100(m) {
+    return m.relative && typeof m.relative.percentile === "number" ? m.relative.percentile : null;
+  }
+
+  /* Third line of the gauge: today's place in the trailing window in plain
+     English, or how far the baseline still has to warm up. */
   function baselineLine(m) {
-    if (m.relative && typeof m.relative.percentile === "number") {
-      var p = m.relative.percentile;
-      var d = m.relative.vsMedian;
-      var sign = d > 0 ? "+" : "";
-      return p + "th pct of " + m.baseline.days + "d · " + sign + d + " vs usual";
+    var p = moodOutOf100(m);
+    if (p !== null) {
+      // Always phrase it the way round that reads naturally.
+      return p >= 50
+        ? "Calmer than " + p + "% of the last fortnight"
+        : "Heavier than " + (100 - p) + "% of the last fortnight";
     }
     if (m.baseline && m.baseline.ready === false) {
-      return "Baseline warming up · " + m.baseline.samples + "/" + m.baseline.needed;
+      return (
+        "Still learning what normal looks like · " +
+        m.baseline.samples +
+        " of " +
+        m.baseline.needed
+      );
     }
     return "";
   }
@@ -736,7 +756,11 @@
 
     stateEl.className = "state " + moodTone(headline);
     setText(stateLabel, headline);
-    setText(stateScore, "· " + (m.score > 0 ? "+" : "") + m.score);
+
+    // 0-100 where 50 is an ordinary day and higher is better news. No minus
+    // signs. Blank until there's a baseline to measure against.
+    var outOf100 = moodOutOf100(m);
+    setText(stateScore, outOf100 === null ? "" : "· " + outOf100 + "/100");
 
     var c = m.counts || {};
     var n = function (v) {
@@ -744,19 +768,13 @@
     };
     setText(
       stateBreakdown,
-      "Negative " +
-        n(c.negative) +
-        "% · Neutral " +
-        n(c.neutral) +
-        "% · Positive " +
-        n(c.positive) +
-        "%"
+      n(c.negative) + "% bad news · " + n(c.neutral) + "% neutral · " + n(c.positive) + "% good"
     );
 
     setText(stateBaseline, baselineLine(m));
 
     var tops = m.topTopics && m.topTopics.length ? m.topTopics.join(" · ") : "—";
-    setText(stateWeight, "Main weight: " + tops);
+    setText(stateWeight, "Mostly " + tops);
 
     stateEl.style.display = "block";
   }
