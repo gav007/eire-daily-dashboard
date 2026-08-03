@@ -47,20 +47,18 @@
   var VOICE_VOLUME = 0.8; // audible over the 0.3 ambience, not blasting
   var VOICE_START_HOUR = 8; // first hour a voice may play (08:00)
   var VOICE_END_HOUR = 22; // stop before this hour (last play 21:00–21:59)
-  /* Fixed timetable, alternating weather and news:
+  /* Fixed timetable — a three-way cycle, one of each per hour:
 
-       13:00 weather   13:15 news   13:30 weather   13:45 news   …
+       13:00 weather   13:20 headline   13:40 news clip
+       14:00 weather   14:20 headline   14:40 news clip
 
-     VOICE_BLOCK_MIN is the only dial. 15 = four clips an hour (the current
-     setting), 30 = two an hour, 60 = one. It must divide 60 evenly, and it
-     should stay an even division so the weather/news alternation lines up the
-     same way every hour.
+     At 20-minute blocks that lands exactly one spoken headline an hour, evenly
+     spaced, with nothing crowding anything else.
 
-     Each block fires at most once and is claimed in localStorage, so a refresh
-     or kiosk reload can't replay it. If the tablet was asleep at the boundary
-     the clip still fires at the first opportunity inside that block rather
-     than being skipped. */
-  var VOICE_BLOCK_MIN = 15;
+     VOICE_BLOCK_MIN is the dial. 20 gives the pattern above; 15 speeds
+     everything up (and the three-way cycle then drifts round the hour rather
+     than landing on the same minutes); 30 slows it down. It must divide 60. */
+  var VOICE_BLOCK_MIN = 20;
   var VOICE_SLOT_KEY = "eireVoiceSlot"; // localStorage: last block played
   var VOICE_ROT_PREFIX = "eireVoiceRot:"; // localStorage: per-set rotation index
   var VOICE_TICK_MS = 30000; // how often we check whether a clip is due
@@ -150,7 +148,6 @@
   // The top story read aloud by Gemini, served as a WAV by the Worker. If it's
   // unavailable for any reason the news slot quietly plays a recorded clip.
   var HEADLINE_ENDPOINT = "/api/headline-audio";
-  var NEWS_TURN_KEY = "eireNewsTurn"; // localStorage: headline <-> recorded clip
   var MOOD_REFRESH_MS = 30 * 60 * 1000; // re-poll mood every 30 min (Worker caches it ~3h)
 
   /* Stock Dublin image, used when an article has no image OR its image fails to
@@ -957,14 +954,11 @@
      paused or replaced — short one-shot Dublin voice clips play alongside it
      through their own <audio id="voice"> element.
 
-     A fixed timetable alternating two families of clip, every
-     VOICE_BLOCK_MIN minutes (15 = four an hour):
-       even blocks   WEATHER — rain / frost / wind / sun / partly / cloudy
-       odd blocks    NEWS    — alternating between the REAL top headline read
-                               aloud by Gemini, and one of the recorded mood
-                               clips (goodnews / grand / mixed / heavy / grim /
-                               doom, from how today's sentiment compares to the
-                               trailing fortnight)
+     A fixed three-way timetable, one of each per hour at 20-minute blocks:
+       :00  WEATHER   — rain / frost / wind / sun / partly / cloudy
+       :20  HEADLINE  — the real top story read aloud by Gemini
+       :40  NEWS CLIP — goodnews / grand / mixed / heavy / grim / doom, from
+                        how today's sentiment compares to the trailing fortnight
 
      Rules:
        • each block fires at most once, claimed in localStorage so a
@@ -1010,9 +1004,10 @@
     }
   }
 
-  /* Which block of the hour we're in, and what should play in it. Even-numbered
-     blocks are weather, odd are news — so at 15-minute blocks that's
-     weather / news / weather / news across the hour. */
+  /* Which block of the hour we're in, and what should play in it. A three-way
+     cycle: weather, then the spoken headline, then a recorded news clip. */
+  var VOICE_CYCLE = ["weather", "headline", "clip"];
+
   function voiceSlot(date) {
     var idx = Math.floor(date.getMinutes() / VOICE_BLOCK_MIN);
     return {
@@ -1026,7 +1021,7 @@
         pad(date.getHours()) +
         "-" +
         idx,
-      family: idx % 2 === 0 ? "weather" : "news",
+      family: VOICE_CYCLE[idx % VOICE_CYCLE.length],
     };
   }
 
@@ -1118,16 +1113,6 @@
     }
   }
 
-  /* The news slot alternates between the REAL headline read aloud and one of
-     the recorded mood clips, so you get both the substance and the character.
-     The alternation is persisted, so it survives a refresh. */
-  function playNewsVoice() {
-    var wantHeadline = vGet(NEWS_TURN_KEY) !== "clip";
-    vSet(NEWS_TURN_KEY, wantHeadline ? "clip" : "headline");
-    if (wantHeadline) return playHeadlineAudio();
-    playVoiceFile(pickVoiceFile("news"));
-  }
-
   /* Stream the spoken headline from the Worker. Anything that goes wrong —
      no Gemini key, rate limit, outage — makes the <audio> element fire an
      error, and we quietly drop back to a recorded clip. The kiosk must never
@@ -1165,13 +1150,14 @@
     var slot = voiceSlot(d);
     if (vGet(VOICE_SLOT_KEY) === slot.id) return; // this block already played
 
-    if (slot.family === "news") {
+    if (slot.family === "headline") {
       vSet(VOICE_SLOT_KEY, slot.id); // claim the block BEFORE playing (no double-fire)
-      playNewsVoice();
+      playHeadlineAudio();
       return;
     }
 
-    var file = pickVoiceFile("weather");
+    // "clip" -> a recorded news-mood clip; "weather" -> a recorded weather clip.
+    var file = pickVoiceFile(slot.family === "clip" ? "news" : "weather");
     if (!file) return;
     vSet(VOICE_SLOT_KEY, slot.id);
     playVoiceFile(file);
