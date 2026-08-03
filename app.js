@@ -148,6 +148,12 @@
   // The top story read aloud by Gemini, served as a WAV by the Worker. If it's
   // unavailable for any reason the news slot quietly plays a recorded clip.
   var HEADLINE_ENDPOINT = "/api/headline-audio";
+  /* "The Reckoning" — the whole day's news written as one paragraph and spoken
+     in the ElevenLabs cloned voice. Deliberately RARE: it takes over the :40
+     slot only at these hours, so it stays an event rather than wallpaper.
+     Everything else, Deco included, is untouched. */
+  var DIGEST_ENDPOINT = "/api/digest-audio";
+  var DIGEST_HOURS = [9, 18]; // morning and evening
   var MOOD_REFRESH_MS = 30 * 60 * 1000; // re-poll mood every 30 min (Worker caches it ~3h)
 
   /* Stock Dublin image, used when an article has no image OR its image fails to
@@ -1113,18 +1119,18 @@
     }
   }
 
-  /* Stream the spoken headline from the Worker. Anything that goes wrong —
-     no Gemini key, rate limit, outage — makes the <audio> element fire an
-     error, and we quietly drop back to a recorded clip. The kiosk must never
-     just go silent because a cloud service had a bad minute. */
-  function playHeadlineAudio() {
+  /* Play a Worker-generated audio stream (the Deco headline, or the digest),
+     falling back to a recorded clip if anything at all goes wrong — no key,
+     rate limit, outage. The kiosk must never just go silent because a cloud
+     service had a bad minute. */
+  function playRemoteVoice(endpoint, fallbackSet) {
     if (!voiceEl) return;
     voiceEl.onerror = function () {
       voiceEl.onerror = null;
-      console.warn("Headline audio unavailable — using a recorded clip instead");
-      playVoiceFile(pickVoiceFile("news"));
+      console.warn(endpoint + " unavailable — using a recorded clip instead");
+      playVoiceFile(pickVoiceFile(fallbackSet));
     };
-    voiceEl.src = apiUrl(HEADLINE_ENDPOINT);
+    voiceEl.src = apiUrl(endpoint);
     voiceEl.volume = VOICE_VOLUME;
     try {
       voiceEl.currentTime = 0;
@@ -1132,9 +1138,28 @@
     var p = voiceEl.play();
     if (p && p.catch) {
       p.catch(function (e) {
-        console.warn("Headline blocked (needs a tap first?):", e && e.message);
+        console.warn("Remote voice blocked (needs a tap first?):", e && e.message);
       });
     }
+  }
+
+  function playDigestAudio() {
+    playRemoteVoice(DIGEST_ENDPOINT, "news");
+  }
+
+  function isDigestHour(hour) {
+    for (var i = 0; i < DIGEST_HOURS.length; i++) {
+      if (DIGEST_HOURS[i] === hour) return true;
+    }
+    return false;
+  }
+
+  /* Stream the spoken headline from the Worker. Anything that goes wrong —
+     no Gemini key, rate limit, outage — makes the <audio> element fire an
+     error, and we quietly drop back to a recorded clip. The kiosk must never
+     just go silent because a cloud service had a bad minute. */
+  function playHeadlineAudio() {
+    playRemoteVoice(HEADLINE_ENDPOINT, "news");
   }
 
   // The scheduled gate: one clip per half-hour block, daytime only, sound on.
@@ -1153,6 +1178,13 @@
     if (slot.family === "headline") {
       vSet(VOICE_SLOT_KEY, slot.id); // claim the block BEFORE playing (no double-fire)
       playHeadlineAudio();
+      return;
+    }
+
+    // Twice a day the recorded-clip slot gives way to the full spoken digest.
+    if (slot.family === "clip" && isDigestHour(hour)) {
+      vSet(VOICE_SLOT_KEY, slot.id);
+      playDigestAudio();
       return;
     }
 
@@ -1184,6 +1216,24 @@
       headline: function () {
         playHeadlineAudio();
         return "fetching + playing the spoken headline…";
+      },
+      digest: function () {
+        playDigestAudio();
+        return "fetching + playing the full news digest…";
+      },
+      reads: function () {
+        fetch(apiUrl(DIGEST_ENDPOINT) + "?text=1")
+          .then(function (r) {
+            return r.json();
+          })
+          .then(function (d) {
+            console.log("[eireVoice] digest (" + d.characters + " chars ≈ " + d.creditsApprox + " credits):");
+            console.log(d.text);
+          })
+          .catch(function (e) {
+            console.warn("[eireVoice] reads failed:", e && e.message);
+          });
+        return "fetching the written digest — see console";
       },
       says: function () {
         fetch(apiUrl(HEADLINE_ENDPOINT) + "?text=1")
@@ -1267,6 +1317,12 @@
         "★ Headline",
         function () {
           playHeadlineAudio();
+        },
+      ],
+      [
+        "☠ Digest",
+        function () {
+          playDigestAudio();
         },
       ],
     ];

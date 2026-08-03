@@ -135,6 +135,48 @@ const TTS_TITLE_MAX = 240;           // keep the spoken line short
    instead, and read the newest story from whichever source is up. */
 const HEADLINE_TURN_KEY = "tts:srcturn";
 
+/* ---------- The Reckoning: a spoken digest of the whole day's news ----------
+   Completely separate from the Deco headline reading above, which is unchanged.
+
+   Two stages: Gemini reads ALL of today's headlines and writes one short
+   paragraph surveying them; ElevenLabs then speaks that paragraph in the
+   user's own cloned voice.
+
+   COST is the thing to watch here — unlike Gemini's free tier, ElevenLabs
+   charges roughly one credit per character. So:
+     - a new paragraph is written at most once every DIGEST_TTL (6h) = 4 a day
+     - DIGEST_MAX_CHARS is a hard ceiling on what is ever sent for synthesis
+     - the audio is cached, so replaying it costs nothing
+   At ~500 characters, 4 times a day, that is ~60k credits a month against a
+   121k Creator allowance. */
+const DIGEST_VOICE_ID = "Z04mOjzpvViB47dvVUg4";
+const DIGEST_ELEVEN_MODEL = "eleven_multilingual_v2"; // best fidelity for a cloned voice
+const DIGEST_ELEVEN_URL = "https://api.elevenlabs.io/v1/text-to-speech/" + DIGEST_VOICE_ID;
+const DIGEST_TEXT_KEY = "digest:text:";
+const DIGEST_AUDIO_KEY = "digest:audio:";
+const DIGEST_TTL = 6 * 60 * 60;      // rewrite/regenerate at most every 6 hours
+const DIGEST_STORY_COUNT = 20;       // how many headlines to survey
+const DIGEST_MAX_CHARS = 700;        // hard cost ceiling on what gets synthesised
+const DIGEST_WORDS = "60 to 90 words";
+const DIGEST_TIMEOUT_MS = 60000;     // ElevenLabs is slower than Gemini
+
+/* The written register. Deliberately about TONE, not about impersonating any
+   real person — the paragraph surveys the news, it never speaks as anybody. */
+const DIGEST_PROMPT =
+  "You are writing a short spoken interlude for a kitchen news dashboard in Ireland.\n\n" +
+  "Below are today's headlines. Write ONE unbroken paragraph of " + DIGEST_WORDS + " that surveys " +
+  "them AS A WHOLE — the shape of the day, what it all amounts to.\n\n" +
+  "Register: poetic, philosophical, apocalyptic. Grave and unhurried, like an old " +
+  "prophecy read aloud. Long cadences. Plain, weighty words. A sense that all of this " +
+  "has happened before and will happen again.\n\n" +
+  "Rules:\n" +
+  "- Do NOT list or enumerate the headlines. Draw the threads together instead.\n" +
+  "- Refer ONLY to what is actually in the headlines. Invent no events, names or facts.\n" +
+  "- Do not name news sources. Do not use bullet points, headings or quotation marks.\n" +
+  "- Do not speak as any real person, and do not address the listener directly.\n" +
+  "- Write to be spoken aloud. No preamble, no title — return the paragraph only.\n\n" +
+  "Headlines:\n";
+
 /* Reader-engagement filler that shouldn't be read out as the top story.
    TheJournal in particular puts quizzes and polls in its news feed. */
 const HEADLINE_SKIP_PREFIX = /^\s*(quiz|poll|competition|sponsored|advertisement|win a\b)/i;
@@ -202,6 +244,13 @@ export default {
         return json({ error: "Method not allowed" }, 405);
       }
       return handleMood(request, env, ctx);
+    }
+
+    if (url.pathname === "/api/digest-audio") {
+      if (request.method !== "GET") {
+        return json({ error: "Method not allowed" }, 405);
+      }
+      return handleDigestAudio(request, env, ctx);
     }
 
     if (url.pathname === "/api/headline-audio") {
@@ -663,6 +712,184 @@ function moodLabel(s) {
   if (s >= -39) return "Bit heavy";
   if (s >= -69) return "Grim enough";
   return "Full doom scroll";
+}
+
+/* ============================================================
+   /api/digest-audio  —  the whole day's news as one spoken paragraph
+   ------------------------------------------------------------
+   ?text=1     the written paragraph as JSON (no ElevenLabs credits spent)
+   ?refresh=1  rewrite now instead of reusing the 6-hour cached one
+   ============================================================ */
+async function handleDigestAudio(request, env, ctx) {
+  const url = new URL(request.url);
+  const preview = url.searchParams.get("text") === "1";
+  const force = url.searchParams.get("refresh") === "1";
+
+  const geminiKey = env && env.GEMINI_API_KEY;
+  const elevenKey = env && env.ELEVENLABS_API_KEY;
+  if (!geminiKey) return json({ available: false, reason: "no_gemini_key" }, 503);
+
+  try {
+    const paragraph = await getDigestText(request, env, geminiKey, force);
+    if (!paragraph) return json({ available: false, reason: "no_news" }, 503);
+
+    if (preview) {
+      return json({
+        available: !!elevenKey,
+        voiceId: DIGEST_VOICE_ID,
+        model: DIGEST_ELEVEN_MODEL,
+        characters: paragraph.length,
+        creditsApprox: paragraph.length,
+        text: paragraph,
+      });
+    }
+    if (!elevenKey) return json({ available: false, reason: "no_elevenlabs_key" }, 503);
+
+    const cacheKey =
+      DIGEST_AUDIO_KEY + hashText(paragraph + "|" + DIGEST_VOICE_ID + "|" + DIGEST_ELEVEN_MODEL);
+
+    if (env.MOOD_LOG) {
+      try {
+        const hit = await env.MOOD_LOG.get(cacheKey, "arrayBuffer");
+        if (hit && hit.byteLength > 512) return mp3Response(hit, "HIT");
+      } catch (e) {
+        console.warn("Digest audio cache read failed:", String(e));
+      }
+    }
+
+    const mp3 = await synthesizeEleven(paragraph, elevenKey);
+    if (env.MOOD_LOG) {
+      ctx.waitUntil(
+        env.MOOD_LOG.put(cacheKey, mp3, { expirationTtl: DIGEST_TTL }).catch((e) =>
+          console.warn("Digest audio cache write failed:", String(e))
+        )
+      );
+    }
+    return mp3Response(mp3, "MISS");
+  } catch (err) {
+    console.warn("Digest failed:", String(err));
+    return json(
+      { available: false, reason: "digest_error", detail: String((err && err.message) || err).slice(0, 200) },
+      503
+    );
+  }
+}
+
+/* The written paragraph, cached for DIGEST_TTL so ElevenLabs is only ever
+   asked to speak a handful of distinct paragraphs a day. */
+async function getDigestText(request, env, geminiKey, force) {
+  const bucket = digestBucket(new Date());
+  const key = DIGEST_TEXT_KEY + bucket;
+
+  if (!force && env && env.MOOD_LOG) {
+    try {
+      const hit = await env.MOOD_LOG.get(key);
+      if (hit) return hit;
+    } catch (e) {
+      console.warn("Digest text cache read failed:", String(e));
+    }
+  }
+
+  const items = await getNewsItems(request);
+  const usable = (items || []).filter(isReadableStory).slice(0, DIGEST_STORY_COUNT);
+  if (usable.length < 3) return null;
+
+  const written = await writeDigest(usable, geminiKey);
+  if (!written) return null;
+
+  if (env && env.MOOD_LOG) {
+    await env.MOOD_LOG.put(key, written, { expirationTtl: DIGEST_TTL }).catch((e) =>
+      console.warn("Digest text cache write failed:", String(e))
+    );
+  }
+  return written;
+}
+
+/* Six-hour buckets, so the paragraph is rewritten at most four times a day. */
+function digestBucket(d) {
+  const p = (n) => (n < 10 ? "0" + n : "" + n);
+  return (
+    d.getUTCFullYear() + "-" + p(d.getUTCMonth() + 1) + "-" + p(d.getUTCDate()) + "-" +
+    Math.floor(d.getUTCHours() / 6)
+  );
+}
+
+async function writeDigest(items, apiKey) {
+  const list = items.map((s) => "- " + String(s.title || "").trim()).join("\n");
+
+  const res = await fetch(MOOD_API_URL, {
+    method: "POST",
+    signal: AbortSignal.timeout(MOOD_TIMEOUT_MS),
+    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+    body: JSON.stringify({
+      contents: [{ role: "user", parts: [{ text: DIGEST_PROMPT + list }] }],
+    }),
+  });
+
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error("Digest HTTP " + res.status + (t ? ": " + t.slice(0, 200) : ""));
+  }
+
+  const text = extractGeminiText(await res.json());
+  if (!text) throw new Error("Digest returned no text");
+
+  // Tidy, then enforce the hard cost ceiling before anything is synthesised.
+  let out = text.replace(/\s+/g, " ").replace(/^["'\s]+|["'\s]+$/g, "").trim();
+  if (out.length > DIGEST_MAX_CHARS) {
+    out = out.slice(0, DIGEST_MAX_CHARS);
+    // Cut back to the last sentence end so it never stops mid-thought.
+    const cut = Math.max(out.lastIndexOf("."), out.lastIndexOf("!"), out.lastIndexOf("?"));
+    if (cut > DIGEST_MAX_CHARS * 0.5) out = out.slice(0, cut + 1);
+  }
+  return out;
+}
+
+/* ElevenLabs returns a finished MP3, so unlike Gemini there's no header to
+   add — browsers play it directly. */
+async function synthesizeEleven(text, apiKey) {
+  const res = await fetch(DIGEST_ELEVEN_URL, {
+    method: "POST",
+    signal: AbortSignal.timeout(DIGEST_TIMEOUT_MS),
+    headers: {
+      "Content-Type": "application/json",
+      "xi-api-key": apiKey,
+      Accept: "audio/mpeg",
+    },
+    body: JSON.stringify({
+      text: text,
+      model_id: DIGEST_ELEVEN_MODEL,
+      voice_settings: {
+        stability: 0.45,        // low enough to stay expressive, high enough not to wander
+        similarity_boost: 0.85, // hold the cloned voice's character
+        style: 0.35,
+        use_speaker_boost: true,
+      },
+    }),
+  });
+
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error("ElevenLabs HTTP " + res.status + (t ? ": " + t.slice(0, 200) : ""));
+  }
+  const buf = await res.arrayBuffer();
+  if (!buf || buf.byteLength < 512) throw new Error("ElevenLabs returned empty audio");
+  return buf;
+}
+
+function mp3Response(buf, cacheState) {
+  return new Response(buf, {
+    status: 200,
+    headers: Object.assign(
+      {
+        "Content-Type": "audio/mpeg",
+        "Content-Length": String(buf.byteLength),
+        "Cache-Control": "public, max-age=1800",
+        "X-Digest-Cache": cacheState,
+      },
+      corsHeaders()
+    ),
+  });
 }
 
 /* ============================================================
