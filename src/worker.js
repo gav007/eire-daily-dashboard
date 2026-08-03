@@ -154,11 +154,32 @@ const DIGEST_ELEVEN_MODEL = "eleven_multilingual_v2"; // best fidelity for a clo
 const DIGEST_ELEVEN_URL = "https://api.elevenlabs.io/v1/text-to-speech/" + DIGEST_VOICE_ID;
 const DIGEST_TEXT_KEY = "digest:text:";
 const DIGEST_AUDIO_KEY = "digest:audio:";
-const DIGEST_TTL = 6 * 60 * 60;      // rewrite/regenerate at most every 6 hours
+/* TWO generations a day, not one an hour. The bulletin is written and spoken
+   once per half-day bucket and the finished MP3 is cached; every play after
+   that is served from cache and costs nothing. A fresh one lands for the
+   morning play and another for the evening. */
+const DIGEST_BUCKET_HOURS = 12;
+const DIGEST_TTL = 26 * 60 * 60;     // keep cached audio comfortably past its bucket
 const DIGEST_STORY_COUNT = 20;       // how many headlines to survey
-const DIGEST_MAX_CHARS = 750;        // hard cost ceiling on what gets synthesised
-const DIGEST_WORDS = "70 to 100 words";
+const DIGEST_MAX_CHARS = 900;        // hard cost ceiling on what gets synthesised
 const DIGEST_TIMEOUT_MS = 60000;     // ElevenLabs is slower than Gemini
+
+/* Pauses. ElevenLabs honours break tags in the text, which is far more reliable
+   than hoping punctuation lands — the first version ran sentences together. */
+const DIGEST_BREAK_LONG = '<break time="0.9s" />';   // around the intro and outro
+const DIGEST_BREAK_SHORT = '<break time="0.45s" />'; // between stories
+
+/* Written in three parts so the pauses can be placed exactly. */
+const DIGEST_SCHEMA = {
+  type: "object",
+  properties: {
+    intro: { type: "string" },
+    stories: { type: "array", items: { type: "string" } },
+    outro: { type: "string" },
+  },
+  required: ["intro", "stories", "outro"],
+  propertyOrdering: ["intro", "stories", "outro"],
+};
 
 /* Delivery. Kept as a constant because it forms part of the audio cache key —
    change a setting and the next play is regenerated rather than replaying the
@@ -166,9 +187,9 @@ const DIGEST_TIMEOUT_MS = 60000;     // ElevenLabs is slower than Gemini
 const DIGEST_VOICE_SETTINGS = {
   stability: 0.55,        // steadier and more deliberate than the default
   similarity_boost: 0.85, // hold the cloned voice's character
-  style: 0.25,            // dialled back — less theatrical
+  style: 0.30,            // a little character back in, without going theatrical
   use_speaker_boost: true,
-  speed: 0.85,            // noticeably slower; 1.0 is normal pace
+  speed: 0.78,            // slower again; 1.0 is normal pace
 };
 
 /* The written register.
@@ -181,22 +202,25 @@ const DIGEST_VOICE_SETTINGS = {
    Still deliberately not impersonating any real person — it reports the news,
    it never speaks as anybody. */
 const DIGEST_PROMPT =
-  "You are writing a short spoken news summary for a kitchen dashboard in Ireland.\n\n" +
-  "Below are today's headlines. Write ONE paragraph of " + DIGEST_WORDS + " covering the THREE " +
-  "OR FOUR most significant stories.\n\n" +
-  "Above all it must be CLEAR. Someone listening once, while making tea, must be able to say " +
-  "afterwards what actually happened. Name the real events, people and places plainly. Never " +
-  "let a metaphor stand in place of a fact.\n\n" +
-  "Tone: grave and unhurried, with a weary sense that none of this is new. The mood lives in " +
-  "the phrasing and the rhythm — never at the cost of the facts.\n\n" +
+  "You are writing a short spoken news bulletin for a kitchen dashboard in Ireland. It is read " +
+  "aloud by a low, weary male voice. Return JSON with three parts.\n\n" +
+  "intro — ONE short line opening the bulletin, 8 to 15 words. Set the mood of the day. Do NOT " +
+  "greet the listener, do not say hello, and never state a name — not the listener's, not your " +
+  "own, not the programme's.\n\n" +
+  "stories — THREE OR FOUR sentences, one per story, covering the most significant headlines. " +
+  "These must be CLEAR and CONCRETE. Name the real people, places and events. If someone died, " +
+  "say who and how. If a warning was issued, say what kind and where. Someone listening once " +
+  "while making tea must be able to say afterwards what happened. Never let a metaphor stand in " +
+  "for a fact. Write numbers as words.\n\n" +
+  "outro — ONE short closing line, 8 to 15 words. A dry, weary remark on the day as a whole.\n\n" +
+  "Character: understated and world-weary, a man who has seen all this before and is not " +
+  "surprised by any of it. Faintly grim, never jokey, never theatrical. The personality lives in " +
+  "the intro, the outro, and the rhythm of the sentences — the story lines themselves stay " +
+  "factually exact.\n\n" +
   "Rules:\n" +
-  "- Say what happened. If someone died, say who and how. If a warning was issued, say what " +
-  "kind and where. Concrete nouns, not abstractions.\n" +
   "- Refer ONLY to what is in the headlines. Invent no events, names, numbers or facts.\n" +
-  "- Short, complete sentences, each ending in a full stop. This is read aloud.\n" +
-  "- No source names, no bullet points, no headings, no quotation marks.\n" +
-  "- Do not speak as any real person, and do not address the listener.\n" +
-  "- Return the paragraph only — no preamble, no title.\n\n" +
+  "- No source names, no bullet points, no quotation marks, no headings.\n" +
+  "- Do not speak as any real person, and do not address the listener directly.\n\n" +
   "Headlines:\n";
 
 /* Reader-engagement filler that shouldn't be read out as the top story.
@@ -867,12 +891,13 @@ async function getDigestText(request, env, geminiKey, force) {
   return written;
 }
 
-/* Six-hour buckets, so the paragraph is rewritten at most four times a day. */
+/* Half-day buckets, so the bulletin is written twice a day — one for the
+   morning play, one for the evening — and replayed from cache in between. */
 function digestBucket(d) {
   const p = (n) => (n < 10 ? "0" + n : "" + n);
   return (
     d.getUTCFullYear() + "-" + p(d.getUTCMonth() + 1) + "-" + p(d.getUTCDate()) + "-" +
-    Math.floor(d.getUTCHours() / 6)
+    Math.floor(d.getUTCHours() / DIGEST_BUCKET_HOURS)
   );
 }
 
@@ -885,6 +910,10 @@ async function writeDigest(items, apiKey) {
     headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
     body: JSON.stringify({
       contents: [{ role: "user", parts: [{ text: DIGEST_PROMPT + list }] }],
+      generationConfig: {
+        responseMimeType: "application/json",
+        responseSchema: DIGEST_SCHEMA,
+      },
     }),
   });
 
@@ -893,17 +922,45 @@ async function writeDigest(items, apiKey) {
     throw new Error("Digest HTTP " + res.status + (t ? ": " + t.slice(0, 200) : ""));
   }
 
-  const text = extractGeminiText(await res.json());
-  if (!text) throw new Error("Digest returned no text");
+  const raw = extractGeminiText(await res.json());
+  if (!raw) throw new Error("Digest returned no text");
 
-  // Tidy, then enforce the hard cost ceiling before anything is synthesised.
-  let out = text.replace(/\s+/g, " ").replace(/^["'\s]+|["'\s]+$/g, "").trim();
-  if (out.length > DIGEST_MAX_CHARS) {
-    out = out.slice(0, DIGEST_MAX_CHARS);
-    // Cut back to the last sentence end so it never stops mid-thought.
-    const cut = Math.max(out.lastIndexOf("."), out.lastIndexOf("!"), out.lastIndexOf("?"));
-    if (cut > DIGEST_MAX_CHARS * 0.5) out = out.slice(0, cut + 1);
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    throw new Error("Digest JSON parse failed");
   }
+
+  const tidy = (s) => String(s || "").replace(/\s+/g, " ").replace(/^["'\s]+|["'\s]+$/g, "").trim();
+  const intro = tidy(parsed.intro);
+  const outro = tidy(parsed.outro);
+  const stories = (Array.isArray(parsed.stories) ? parsed.stories : []).map(tidy).filter(Boolean);
+  if (!stories.length) throw new Error("Digest returned no stories");
+
+  return assembleDigest(intro, stories, outro);
+}
+
+/* Stitch the three parts together with explicit pauses, then enforce the hard
+   cost ceiling. Stories are dropped whole rather than truncated mid-sentence,
+   and the outro is always kept so the bulletin still lands properly. */
+function assembleDigest(intro, stories, outro) {
+  const build = (list) => {
+    const parts = [];
+    if (intro) parts.push(intro, DIGEST_BREAK_LONG);
+    parts.push(list.join(" " + DIGEST_BREAK_SHORT + " "));
+    if (outro) parts.push(DIGEST_BREAK_LONG, outro);
+    return parts.join(" ");
+  };
+
+  let kept = stories.slice();
+  let out = build(kept);
+  while (out.length > DIGEST_MAX_CHARS && kept.length > 1) {
+    kept.pop();
+    out = build(kept);
+  }
+  // Still over with a single story: trim that one back to a sentence end.
+  if (out.length > DIGEST_MAX_CHARS) out = out.slice(0, DIGEST_MAX_CHARS);
   return out;
 }
 
