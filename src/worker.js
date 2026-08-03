@@ -115,6 +115,17 @@ const TTS_CACHE_TTL = 6 * 60 * 60;   // drop cached audio after ~6h
 const TTS_TIMEOUT_MS = 30000;        // voice generation is slower than text
 const TTS_TITLE_MAX = 240;           // keep the spoken line short
 
+/* Reading "whatever is newest" sounds fair but isn't: TheJournal publishes far
+   more often than RTÉ, so it took the top slot most of the time even though
+   RTÉ supplies the bigger share of the feed. So we take turns between sources
+   instead, and read the newest story from whichever source is up. */
+const HEADLINE_TURN_KEY = "tts:srcturn";
+
+/* Reader-engagement filler that shouldn't be read out as the top story.
+   TheJournal in particular puts quizzes and polls in its news feed. */
+const HEADLINE_SKIP_PREFIX = /^\s*(quiz|poll|competition|sponsored|advertisement|win a\b)/i;
+const HEADLINE_SKIP_QUESTION = /^\s*(should|do you|how much do you|can you|are you|what'?s your)\b/i;
+
 // Allowed values mirrored in the prompt. Topic list matches the frontend legend.
 const MOOD_TOPICS = ["politics","crime","economy","housing","transport","weather","world","local","sport","culture","other"];
 
@@ -651,15 +662,27 @@ async function handleHeadlineAudio(request, env, ctx) {
   const apiKey = env && env.GEMINI_API_KEY;
 
   const items = await getNewsItems(request);
-  const top = (items || [])[0];
-  if (!top || !top.title) {
+  const preview = url.searchParams.get("text") === "1";
+  const picked = await pickHeadlineItem(env, items);
+  if (!picked) {
     return json({ available: false, reason: "no_news" }, 503);
   }
 
-  const line = buildHeadlineLine(top);
-  if (url.searchParams.get("text") === "1") {
-    return json({ available: !!apiKey, voice: TTS_VOICE, model: TTS_MODEL, line: line });
+  const line = buildHeadlineLine(picked.item);
+  if (preview) {
+    return json({
+      available: !!apiKey,
+      voice: TTS_VOICE,
+      model: TTS_MODEL,
+      source: picked.item.source,
+      nextSource: picked.nextSource,
+      line: line,
+    });
   }
+
+  // Advance the source rotation only for real reads, so previewing the line
+  // doesn't quietly skip a source.
+  if (picked.advance) ctx.waitUntil(picked.advance());
   // No key -> tell the caller plainly. The frontend treats any non-audio
   // response as "fall back to a recorded clip".
   if (!apiKey) return json({ available: false, reason: "no_key" }, 503);
@@ -694,6 +717,64 @@ async function handleHeadlineAudio(request, env, ctx) {
       503
     );
   }
+}
+
+/* Is this a real story, or reader-engagement filler? */
+function isReadableStory(item) {
+  if (!item || !item.title) return false;
+  const t = String(item.title);
+  if (HEADLINE_SKIP_PREFIX.test(t)) return false;
+  // "Should drivers be able to…?" style poll prompts — only when it's actually
+  // phrased as a question, so a genuine headline beginning "Should" survives.
+  if (/\?\s*$/.test(t) && HEADLINE_SKIP_QUESTION.test(t)) return false;
+  return true;
+}
+
+/* Choose which story to read, taking turns between sources.
+
+   Rotating by SOURCE rather than taking the newest item overall is the whole
+   point: the busiest publisher would otherwise dominate the slot permanently.
+   Within the chosen source we still take its newest story. If that source has
+   nothing usable right now we move on to the next rather than going silent. */
+async function pickHeadlineItem(env, items) {
+  const usable = (items || []).filter(isReadableStory);
+  if (!usable.length) return null;
+
+  // Distinct sources, in the order they're configured.
+  const sources = [];
+  FEEDS.forEach((f) => {
+    if (sources.indexOf(f.source) === -1) sources.push(f.source);
+  });
+
+  let turn = 0;
+  if (env && env.MOOD_LOG) {
+    try {
+      const n = parseInt((await env.MOOD_LOG.get(HEADLINE_TURN_KEY)) || "0", 10);
+      if (isFinite(n) && n >= 0) turn = n % sources.length;
+    } catch (e) {
+      console.warn("Headline turn read failed:", String(e));
+    }
+  }
+
+  for (let i = 0; i < sources.length; i++) {
+    const idx = (turn + i) % sources.length;
+    const hit = usable.find((it) => it.source === sources[idx]);
+    if (!hit) continue; // nothing usable from that source right now
+    const next = (idx + 1) % sources.length;
+    return {
+      item: hit,
+      nextSource: sources[next],
+      advance: env && env.MOOD_LOG
+        ? () =>
+            env.MOOD_LOG.put(HEADLINE_TURN_KEY, String(next)).catch((e) =>
+              console.warn("Headline turn write failed:", String(e))
+            )
+        : null,
+    };
+  }
+
+  // Every source came up empty on the filter — fall back to the newest usable.
+  return { item: usable[0], nextSource: sources[0], advance: null };
 }
 
 /* The sentence the newsreader actually says. Kept short: one source, one
