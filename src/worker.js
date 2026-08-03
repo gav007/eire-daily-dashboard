@@ -727,6 +727,38 @@ async function handleDigestAudio(request, env, ctx) {
 
   const geminiKey = env && env.GEMINI_API_KEY;
   const elevenKey = env && env.ELEVENLABS_API_KEY;
+
+  /* ?voices=1 lists the voices on the ElevenLabs account (names + ids only —
+     never the key). Needed because a voice id copied from the wrong place, or
+     a Voice Library voice that was never added to the account, fails with a
+     confusing "voice_not_found". */
+  if (url.searchParams.get("voices") === "1") {
+    if (!elevenKey) return json({ available: false, reason: "no_elevenlabs_key" }, 503);
+    try {
+      const r = await fetch("https://api.elevenlabs.io/v1/voices", {
+        signal: AbortSignal.timeout(DIGEST_TIMEOUT_MS),
+        headers: { "xi-api-key": elevenKey, Accept: "application/json" },
+      });
+      if (!r.ok) {
+        const t = await r.text().catch(() => "");
+        return json({ available: false, reason: "voices_http_" + r.status, detail: t.slice(0, 200) }, 503);
+      }
+      const d = await r.json();
+      return json({
+        available: true,
+        configured: DIGEST_VOICE_ID,
+        voices: (d.voices || []).map((v) => ({
+          name: v.name,
+          voice_id: v.voice_id,
+          category: v.category,
+          matches: v.voice_id === DIGEST_VOICE_ID,
+        })),
+      });
+    } catch (e) {
+      return json({ available: false, reason: "voices_error", detail: String(e).slice(0, 200) }, 503);
+    }
+  }
+
   if (!geminiKey) return json({ available: false, reason: "no_gemini_key" }, 503);
 
   try {
