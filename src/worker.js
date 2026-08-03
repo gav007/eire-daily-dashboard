@@ -108,6 +108,20 @@ const MAD_TO_SIGMA = 1.4826;
    kiosk plays it. Cached entries self-delete after TTS_CACHE_TTL. */
 const TTS_MODEL = "gemini-3.1-flash-tts-preview";
 const TTS_VOICE = "Charon"; // 30 available; Charon is a clear, informative read
+
+/* How the headline is performed. Google only ever receives the headline text
+   itself, so the character has to live entirely in the delivery — it is never
+   allowed to invent or reword anything. */
+const TTS_STYLE =
+  "Read the headline exactly as written. Speak as Deco, a working-class North " +
+  "Dublin man in his forties. Use a low, slightly gravelly voice with an " +
+  "unmistakable natural Dublin accent—not British, Scottish, posh, or generic " +
+  "'Irish'. Deliver it conversationally, like a dry observation made across a " +
+  "kitchen table. Sound mildly sceptical and quietly amused, as though none of " +
+  "this nonsense surprises you anymore. Keep the humour understated: no acting, " +
+  "fake laughter, shouting or exaggerated accent. Use a relaxed medium pace, " +
+  "short natural pauses and a slight downward inflection at the end. Do not " +
+  "add, remove or rewrite any words.";
 const TTS_URL =
   "https://generativelanguage.googleapis.com/v1beta/models/" + TTS_MODEL + ":generateContent";
 const TTS_CACHE_PREFIX = "tts:";     // shares the MOOD_LOG namespace, separate key space
@@ -687,7 +701,11 @@ async function handleHeadlineAudio(request, env, ctx) {
   // response as "fall back to a recorded clip".
   if (!apiKey) return json({ available: false, reason: "no_key" }, 503);
 
-  const cacheKey = TTS_CACHE_PREFIX + hashText(line + "|" + TTS_VOICE + "|" + TTS_MODEL);
+  // The style instruction is part of what produced the audio, so it has to be
+  // part of the key. Without it, changing the delivery would keep serving the
+  // previous performance of the same headline until the 6h TTL expired.
+  const cacheKey =
+    TTS_CACHE_PREFIX + hashText(line + "|" + TTS_VOICE + "|" + TTS_MODEL + "|" + TTS_STYLE);
 
   // Already generated this exact line? Serve it straight back.
   if (env.MOOD_LOG) {
@@ -799,7 +817,7 @@ async function synthesizeSpeech(line, apiKey) {
         parts: [
           {
             // The style instruction is part of the prompt for Gemini TTS.
-            text: "Read this aloud as a calm Irish radio newsreader — unhurried, clear, no drama:\n\n" + line,
+            text: TTS_STYLE + "\n\n" + line,
           },
         ],
       },
