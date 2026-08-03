@@ -156,25 +156,47 @@ const DIGEST_TEXT_KEY = "digest:text:";
 const DIGEST_AUDIO_KEY = "digest:audio:";
 const DIGEST_TTL = 6 * 60 * 60;      // rewrite/regenerate at most every 6 hours
 const DIGEST_STORY_COUNT = 20;       // how many headlines to survey
-const DIGEST_MAX_CHARS = 700;        // hard cost ceiling on what gets synthesised
-const DIGEST_WORDS = "60 to 90 words";
+const DIGEST_MAX_CHARS = 750;        // hard cost ceiling on what gets synthesised
+const DIGEST_WORDS = "70 to 100 words";
 const DIGEST_TIMEOUT_MS = 60000;     // ElevenLabs is slower than Gemini
 
-/* The written register. Deliberately about TONE, not about impersonating any
-   real person — the paragraph surveys the news, it never speaks as anybody. */
+/* Delivery. Kept as a constant because it forms part of the audio cache key —
+   change a setting and the next play is regenerated rather than replaying the
+   old performance. */
+const DIGEST_VOICE_SETTINGS = {
+  stability: 0.55,        // steadier and more deliberate than the default
+  similarity_boost: 0.85, // hold the cloned voice's character
+  style: 0.25,            // dialled back — less theatrical
+  use_speaker_boost: true,
+  speed: 0.85,            // noticeably slower; 1.0 is normal pace
+};
+
+/* The written register.
+
+   The first version was pure atmosphere — "old sins in high places are finally
+   reckoned with" — and told a listener nothing about what had actually
+   happened. The tone now has to sit on top of real facts, not replace them:
+   grave in the PHRASING, concrete in the CONTENT.
+
+   Still deliberately not impersonating any real person — it reports the news,
+   it never speaks as anybody. */
 const DIGEST_PROMPT =
-  "You are writing a short spoken interlude for a kitchen news dashboard in Ireland.\n\n" +
-  "Below are today's headlines. Write ONE unbroken paragraph of " + DIGEST_WORDS + " that surveys " +
-  "them AS A WHOLE — the shape of the day, what it all amounts to.\n\n" +
-  "Register: poetic, philosophical, apocalyptic. Grave and unhurried, like an old " +
-  "prophecy read aloud. Long cadences. Plain, weighty words. A sense that all of this " +
-  "has happened before and will happen again.\n\n" +
+  "You are writing a short spoken news summary for a kitchen dashboard in Ireland.\n\n" +
+  "Below are today's headlines. Write ONE paragraph of " + DIGEST_WORDS + " covering the THREE " +
+  "OR FOUR most significant stories.\n\n" +
+  "Above all it must be CLEAR. Someone listening once, while making tea, must be able to say " +
+  "afterwards what actually happened. Name the real events, people and places plainly. Never " +
+  "let a metaphor stand in place of a fact.\n\n" +
+  "Tone: grave and unhurried, with a weary sense that none of this is new. The mood lives in " +
+  "the phrasing and the rhythm — never at the cost of the facts.\n\n" +
   "Rules:\n" +
-  "- Do NOT list or enumerate the headlines. Draw the threads together instead.\n" +
-  "- Refer ONLY to what is actually in the headlines. Invent no events, names or facts.\n" +
-  "- Do not name news sources. Do not use bullet points, headings or quotation marks.\n" +
-  "- Do not speak as any real person, and do not address the listener directly.\n" +
-  "- Write to be spoken aloud. No preamble, no title — return the paragraph only.\n\n" +
+  "- Say what happened. If someone died, say who and how. If a warning was issued, say what " +
+  "kind and where. Concrete nouns, not abstractions.\n" +
+  "- Refer ONLY to what is in the headlines. Invent no events, names, numbers or facts.\n" +
+  "- Short, complete sentences, each ending in a full stop. This is read aloud.\n" +
+  "- No source names, no bullet points, no headings, no quotation marks.\n" +
+  "- Do not speak as any real person, and do not address the listener.\n" +
+  "- Return the paragraph only — no preamble, no title.\n\n" +
   "Headlines:\n";
 
 /* Reader-engagement filler that shouldn't be read out as the top story.
@@ -777,8 +799,14 @@ async function handleDigestAudio(request, env, ctx) {
     }
     if (!elevenKey) return json({ available: false, reason: "no_elevenlabs_key" }, 503);
 
+    // Voice settings are part of what produced the audio, so they belong in the
+    // key — otherwise changing the speed would keep replaying the old pace.
     const cacheKey =
-      DIGEST_AUDIO_KEY + hashText(paragraph + "|" + DIGEST_VOICE_ID + "|" + DIGEST_ELEVEN_MODEL);
+      DIGEST_AUDIO_KEY +
+      hashText(
+        paragraph + "|" + DIGEST_VOICE_ID + "|" + DIGEST_ELEVEN_MODEL + "|" +
+        JSON.stringify(DIGEST_VOICE_SETTINGS)
+      );
 
     if (env.MOOD_LOG) {
       try {
@@ -810,8 +838,10 @@ async function handleDigestAudio(request, env, ctx) {
 /* The written paragraph, cached for DIGEST_TTL so ElevenLabs is only ever
    asked to speak a handful of distinct paragraphs a day. */
 async function getDigestText(request, env, geminiKey, force) {
+  // The prompt is keyed in too, so rewording it takes effect on the next play
+  // instead of serving the previous wording for up to six hours.
   const bucket = digestBucket(new Date());
-  const key = DIGEST_TEXT_KEY + bucket;
+  const key = DIGEST_TEXT_KEY + hashText(DIGEST_PROMPT) + ":" + bucket;
 
   if (!force && env && env.MOOD_LOG) {
     try {
@@ -891,12 +921,7 @@ async function synthesizeEleven(text, apiKey) {
     body: JSON.stringify({
       text: text,
       model_id: DIGEST_ELEVEN_MODEL,
-      voice_settings: {
-        stability: 0.45,        // low enough to stay expressive, high enough not to wander
-        similarity_boost: 0.85, // hold the cloned voice's character
-        style: 0.35,
-        use_speaker_boost: true,
-      },
+      voice_settings: DIGEST_VOICE_SETTINGS,
     }),
   });
 
