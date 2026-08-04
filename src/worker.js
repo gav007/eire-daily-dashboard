@@ -175,8 +175,21 @@ const DIGEST_TIMEOUT_MS = 60000;     // ElevenLabs is slower than Gemini
 
 /* Pauses. ElevenLabs honours break tags in the text, which is far more reliable
    than hoping punctuation lands — the first version ran sentences together. */
-const DIGEST_BREAK_LONG = '<break time="0.9s" />';   // around the intro and outro
-const DIGEST_BREAK_SHORT = '<break time="0.45s" />'; // between stories
+const DIGEST_BREAK_LONG = '<break time="0.9s" />'; // around the intro and outro
+
+/* Between stories. This used to be a single fixed 0.45s, and an identical gap
+   after every story is what made the bulletin sound like a list being read out:
+   fact, hard stop, fact, hard stop. Rotating through uneven beats breaks the
+   metronome, so it lands more like someone moving from one thing to the next.
+   Prime-ish, unequal values on purpose — nothing here should be a clean
+   multiple of anything else. */
+const DIGEST_BREAK_BEATS = [
+  '<break time="0.3s" />',
+  '<break time="0.55s" />',
+  '<break time="0.35s" />',
+  '<break time="0.45s" />',
+  '<break time="0.6s" />',
+];
 
 /* Written in three parts so the pauses can be placed exactly. */
 const DIGEST_SCHEMA = {
@@ -231,12 +244,30 @@ const DIGEST_PROMPT =
   "Unsettling, certain of itself, faintly menacing. It should sound like the opening of " +
   "something he is not sure he wants to hear. State no OTHER name — not your own, not the " +
   "programme's.\n\n" +
+  "The intro and outro must be PLAIN ENGLISH and instantly understandable, heard once, out " +
+  "loud, by someone not paying full attention. Ominous, not obscure. ONE concrete image at " +
+  "most, and it must be an ordinary thing. Do NOT stack images or run two metaphors together. " +
+  "Nothing surreal, nothing hallucinatory, no riddles, no invented proverbs, no phrases that " +
+  "sound deep but mean nothing. If a line could not be repeated back by the listener " +
+  "afterwards, it is wrong. Menace comes from saying a plain thing flatly, not from strange " +
+  "words.\n\n" +
   "stories — THREE OR FOUR sentences, one per story, covering the most significant headlines. " +
   "These must be CLEAR and CONCRETE, and completely plain — no character, no colour, no " +
   "commentary. Name the real people, places and events. If someone died, say who and how. If a " +
   "warning was issued, say what kind and where. Someone listening once while making tea must be " +
   "able to say afterwards what happened. Never let a metaphor stand in for a fact. Write " +
   "numbers as words.\n\n" +
+  "The stories must FLOW, not stack. Read aloud they should sound like a man moving through " +
+  "what happened, not reading a list. So: every sentence after the first opens with a short " +
+  "natural link before the fact — 'Then', 'And', 'Over in', 'Out in', 'Meanwhile', 'Same day' " +
+  "or similar. Vary them; never use the same one twice in one bulletin. Once, and only once in " +
+  "the whole bulletin, he may add a flat four-word-or-shorter remark AFTER a story — 'That one " +
+  "is bad.' or 'Same as last week.' Keep it dry and keep it rare. The factual sentence itself " +
+  "stays clean either way: the link goes in front of it and the remark comes after it, never " +
+  "inside it.\n\n" +
+  "You may also, at most ONCE in the whole bulletin, put 'Hm.' on its own between two stories, " +
+  "as a breath before moving on. Write it exactly as 'Hm.' and never anything else — no stage " +
+  "directions, no bracketed sounds, no asterisks. Never more than one.\n\n" +
   "outro — ONE line, 8 to 16 words. A verdict on THIS day's news specifically, drawn from the " +
   "stories you just wrote — not a generic sign-off. Fatalistic, aphoristic, and final. It should " +
   "land like a lid closing.\n\n" +
@@ -261,6 +292,9 @@ const DIGEST_PROMPT =
   "Rules:\n" +
   "- Refer ONLY to what is in the headlines. Invent no events, names, numbers or facts.\n" +
   "- No source names, no bullet points, no quotation marks, no headings.\n" +
+  "- Never write a stage direction or a sound effect. Nothing in square brackets, nothing in " +
+  "asterisks, no 'clears throat', no 'sighs'. Every character you write WILL be read out as a " +
+  "word. Write only what is meant to be spoken.\n" +
   "- Do not speak as any real person. Address the listener only as described above.\n\n" +
   "Headlines:\n";
 
@@ -995,7 +1029,19 @@ async function writeDigest(items, apiKey) {
     throw new Error("Digest JSON parse failed");
   }
 
-  const tidy = (s) => String(s || "").replace(/\s+/g, " ").replace(/^["'\s]+|["'\s]+$/g, "").trim();
+  /* Strip stage directions before anything else. The prompt forbids them, but a
+     model that slips one through costs real money to find out about: ElevenLabs
+     v2 has no idea "[clears throat]" is a direction and will simply say those
+     two words aloud, and by then the bulletin is synthesised, cached and being
+     replayed hourly. Cheap to strip, expensive to miss. */
+  const tidy = (s) =>
+    String(s || "")
+      .replace(/\[[^\]]*\]/g, " ")      // [clears throat], [sighs]
+      .replace(/\*[^*]*\*/g, " ")       // *pauses*
+      .replace(/\([^)]*\)/g, " ")       // (quietly)
+      .replace(/\s+/g, " ")
+      .replace(/^["'\s]+|["'\s]+$/g, "")
+      .trim();
   const intro = tidy(parsed.intro);
   const outro = tidy(parsed.outro);
   const stories = (Array.isArray(parsed.stories) ? parsed.stories : []).map(tidy).filter(Boolean);
@@ -1011,7 +1057,13 @@ function assembleDigest(intro, stories, outro) {
   const build = (list) => {
     const parts = [];
     if (intro) parts.push(intro, DIGEST_BREAK_LONG);
-    parts.push(list.join(" " + DIGEST_BREAK_SHORT + " "));
+    // Uneven beats between stories — see DIGEST_BREAK_BEATS. Story i is joined
+    // to the next by beat i, so no two consecutive gaps are the same length.
+    const chained = list.reduce(
+      (acc, s, i) => (i === 0 ? s : acc + " " + DIGEST_BREAK_BEATS[(i - 1) % DIGEST_BREAK_BEATS.length] + " " + s),
+      ""
+    );
+    parts.push(chained);
     if (outro) parts.push(DIGEST_BREAK_LONG, outro);
     return parts.join(" ");
   };
