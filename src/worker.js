@@ -208,8 +208,19 @@ const DIGEST_VOICE_SETTINGS = {
    happened. The tone now has to sit on top of real facts, not replace them:
    grave in the PHRASING, concrete in the CONTENT.
 
-   Still deliberately not impersonating any real person — it reports the news,
-   it never speaks as anybody. */
+   The cadence paragraph is the Manson speech pattern — sideways entry, circling
+   back, homely images turned to menace, the enormous stated small — written out
+   as MANNER rather than as a name. Two reasons, and both matter:
+
+     1. It is a delivery style, not an impersonation. The bulletin still never
+        claims to be anybody, and never puts words in a real person's mouth.
+     2. Practically, naming a real criminal figure in the prompt is the kind of
+        thing Gemini refuses. A refusal here doesn't degrade gracefully — the
+        digest throws, and the kiosk drops to a recorded clip. Describing the
+        pattern gets the sound reliably; naming him gets silence.
+
+   So the "do not speak as any real person" rule below stays, and is not in
+   tension with the cadence above. */
 const DIGEST_PROMPT =
   "You are writing a short spoken news bulletin for a kitchen dashboard in Ireland. It is read " +
   "aloud by a low, weary male voice. Return JSON with three parts.\n\n" +
@@ -232,8 +243,15 @@ const DIGEST_PROMPT =
   "Character: all of the personality lives in the intro and the outro. There, the voice is a " +
   "roadside preacher who has stopped expecting anything of anyone — cryptic, fatalistic, " +
   "unimpressed by cruelty because he considers it ordinary. Plain hard words, no ornament, no " +
-  "jokes, never theatrical. Between those two lines the delivery goes completely straight: the " +
-  "stories are read as bare fact, which is what makes the framing land.\n\n" +
+  "jokes, never theatrical.\n\n" +
+  "His cadence in those two lines: the thought arrives sideways and circles back on itself " +
+  "rather than running straight. He starts somewhere odd, doubles back, then lands the point " +
+  "flat and hard, as though it were obvious and he is faintly impatient at having to say it. He " +
+  "reaches for homely, physical things — dust, clocks, roads, animals, weather, dirt — and turns " +
+  "them to menace. He states the enormous in a small, level way. He does not argue, explain or " +
+  "persuade; he pronounces.\n\n" +
+  "Between those two lines the delivery goes completely straight: the stories are read as bare " +
+  "fact, which is what makes the framing land.\n\n" +
   "Hesitation — in the intro and the outro ONLY. He is not a smooth talker. He loses the thread " +
   "and picks it up again. In those two lines use a LITTLE of this: an ellipsis for a beat " +
   "mid-sentence, or a phrase broken off and restarted, or one word repeated. About one stumble " +
