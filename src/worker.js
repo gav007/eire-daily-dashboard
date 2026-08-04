@@ -154,12 +154,21 @@ const DIGEST_ELEVEN_MODEL = "eleven_multilingual_v2"; // best fidelity for a clo
 const DIGEST_ELEVEN_URL = "https://api.elevenlabs.io/v1/text-to-speech/" + DIGEST_VOICE_ID;
 const DIGEST_TEXT_KEY = "digest:text:";
 const DIGEST_AUDIO_KEY = "digest:audio:";
-/* TWO generations a day, not one an hour. The bulletin is written and spoken
-   once per half-day bucket and the finished MP3 is cached; every play after
-   that is served from cache and costs nothing. A fresh one lands for the
-   morning play and another for the evening. */
-const DIGEST_BUCKET_HOURS = 12;
-const DIGEST_TTL = 26 * 60 * 60;     // keep cached audio comfortably past its bucket
+/* TWO generations a day, no matter how often it is played. The bulletin is
+   written and spoken at the two times below and the finished MP3 is cached;
+   EVERY other play — the kiosk now asks for it once an hour — is served from
+   that cache and costs nothing.
+
+   These are Dublin wall-clock times, deliberately, because the kiosk plays on
+   Dublin time. The previous version bucketed by UTC half-day, which put a
+   boundary at 13:00 Dublin: harmless when the digest only played twice a day,
+   but with hourly plays the 13:40 play would have crossed it and paid for a
+   third generation. */
+const DIGEST_GEN_TIMES = [
+  { hour: 9, minute: 40, label: "am" },
+  { hour: 16, minute: 40, label: "pm" },
+];
+const DIGEST_TTL = 26 * 60 * 60;     // outlives the longest gap (16:40 -> 09:40) with room to spare
 const DIGEST_STORY_COUNT = 20;       // how many headlines to survey
 const DIGEST_MAX_CHARS = 900;        // hard cost ceiling on what gets synthesised
 const DIGEST_TIMEOUT_MS = 60000;     // ElevenLabs is slower than Gemini
@@ -870,8 +879,8 @@ async function handleDigestAudio(request, env, ctx) {
 async function getDigestText(request, env, geminiKey, force) {
   // The prompt is keyed in too, so rewording it takes effect on the next play
   // instead of serving the previous wording for up to six hours.
-  const bucket = digestBucket(new Date());
-  const key = DIGEST_TEXT_KEY + hashText(DIGEST_PROMPT) + ":" + bucket;
+  const slot = digestSlot(new Date());
+  const key = DIGEST_TEXT_KEY + hashText(DIGEST_PROMPT) + ":" + slot;
 
   if (!force && env && env.MOOD_LOG) {
     try {
@@ -897,14 +906,36 @@ async function getDigestText(request, env, geminiKey, force) {
   return written;
 }
 
-/* Half-day buckets, so the bulletin is written twice a day — one for the
-   morning play, one for the evening — and replayed from cache in between. */
-function digestBucket(d) {
-  const p = (n) => (n < 10 ? "0" + n : "" + n);
-  return (
-    d.getUTCFullYear() + "-" + p(d.getUTCMonth() + 1) + "-" + p(d.getUTCDate()) + "-" +
-    Math.floor(d.getUTCHours() / DIGEST_BUCKET_HOURS)
-  );
+/* Dublin wall-clock date and time-of-day. Workers run in UTC, but the two
+   generation times are fixed points on the kiosk's clock, so the comparison
+   has to happen in Dublin time or it drifts by an hour every summer. */
+function dublinClock(d) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Dublin",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(d);
+  const get = (t) => (parts.find((p) => p.type === t) || {}).value;
+  return {
+    date: get("year") + "-" + get("month") + "-" + get("day"),
+    // Some ICU builds render midnight as "24" under hour12:false.
+    minutes: (Number(get("hour")) % 24) * 60 + Number(get("minute")),
+  };
+}
+
+/* Which generation the current moment belongs to — the most recent one that
+   has already passed. Everything between two generation times shares a slot
+   id, which is what makes the hourly replays free: same id, same cache key,
+   same MP3 handed straight back. */
+function digestSlot(now) {
+  const t = dublinClock(now);
+  for (let i = DIGEST_GEN_TIMES.length - 1; i >= 0; i--) {
+    const g = DIGEST_GEN_TIMES[i];
+    if (t.minutes >= g.hour * 60 + g.minute) return t.date + "-" + g.label;
+  }
+  // Before the morning generation: still on last night's bulletin.
+  const y = dublinClock(new Date(now.getTime() - 24 * 60 * 60 * 1000));
+  return y.date + "-" + DIGEST_GEN_TIMES[DIGEST_GEN_TIMES.length - 1].label;
 }
 
 async function writeDigest(items, apiKey) {

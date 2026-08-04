@@ -49,8 +49,8 @@
   var VOICE_END_HOUR = 22; // stop before this hour (last play 21:00–21:59)
   /* Fixed timetable — a three-way cycle, one of each per hour:
 
-       13:00 weather   13:20 headline   13:40 news clip
-       14:00 weather   14:20 headline   14:40 news clip
+       13:00 weather   13:20 headline   13:40 digest
+       14:00 weather   14:20 headline   14:40 digest
 
      At 20-minute blocks that lands exactly one spoken headline an hour, evenly
      spaced, with nothing crowding anything else.
@@ -149,11 +149,16 @@
   // unavailable for any reason the news slot quietly plays a recorded clip.
   var HEADLINE_ENDPOINT = "/api/headline-audio";
   /* "The Reckoning" — the whole day's news written as one paragraph and spoken
-     in the ElevenLabs cloned voice. Deliberately RARE: it takes over the :40
-     slot only at these hours, so it stays an event rather than wallpaper.
-     Everything else, Deco included, is untouched. */
+     in the ElevenLabs cloned voice. It takes over the :40 slot EVERY hour,
+     08:40 through 21:40. Everything else, Deco included, is untouched.
+
+     That is hourly PLAYS, not hourly cost. The Worker still only writes and
+     speaks a new bulletin twice a day — 09:40 and 16:40 Dublin time — and
+     saves the recording; every other hour replays the saved one for free. The
+     schedule lives in the Worker (DIGEST_GEN_TIMES in src/worker.js), so
+     changing those two times does not need a change here. */
   var DIGEST_ENDPOINT = "/api/digest-audio";
-  var DIGEST_HOURS = [9, 18]; // morning and evening
+  var DIGEST_EVERY_HOUR = true;
   var MOOD_REFRESH_MS = 30 * 60 * 1000; // re-poll mood every 30 min (Worker caches it ~3h)
 
   /* Stock Dublin image, used when an article has no image OR its image fails to
@@ -963,8 +968,12 @@
      A fixed three-way timetable, one of each per hour at 20-minute blocks:
        :00  WEATHER   — rain / frost / wind / sun / partly / cloudy
        :20  HEADLINE  — the real top story read aloud by Gemini
-       :40  NEWS CLIP — goodnews / grand / mixed / heavy / grim / doom, from
-                        how today's sentiment compares to the trailing fortnight
+       :40  DIGEST    — "The Reckoning", the whole day's news in the cloned
+                        ElevenLabs voice. Generated twice a day and replayed
+                        from the Worker's cache the rest of the time. If it is
+                        unavailable this falls back to a recorded news clip
+                        (goodnews / grand / mixed / heavy / grim / doom, from
+                        how today's sentiment compares to the trailing fortnight)
 
      Rules:
        • each block fires at most once, claimed in localStorage so a
@@ -1147,11 +1156,8 @@
     playRemoteVoice(DIGEST_ENDPOINT, "news");
   }
 
-  function isDigestHour(hour) {
-    for (var i = 0; i < DIGEST_HOURS.length; i++) {
-      if (DIGEST_HOURS[i] === hour) return true;
-    }
-    return false;
+  function isDigestHour() {
+    return DIGEST_EVERY_HOUR;
   }
 
   /* Stream the spoken headline from the Worker. Anything that goes wrong —
@@ -1181,8 +1187,8 @@
       return;
     }
 
-    // Twice a day the recorded-clip slot gives way to the full spoken digest.
-    if (slot.family === "clip" && isDigestHour(hour)) {
+    // The recorded-clip slot gives way to the full spoken digest.
+    if (slot.family === "clip" && isDigestHour()) {
       vSet(VOICE_SLOT_KEY, slot.id);
       playDigestAudio();
       return;
