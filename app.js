@@ -47,18 +47,19 @@
   var VOICE_VOLUME = 0.8; // audible over the 0.3 ambience, not blasting
   var VOICE_START_HOUR = 8; // first hour a voice may play (08:00)
   var VOICE_END_HOUR = 22; // stop before this hour (last play 21:00–21:59)
-  /* Fixed timetable — a three-way cycle, one of each per hour:
+  /* Fixed timetable — a four-way cycle, one of each per hour:
 
-       13:00 weather   13:20 headline   13:40 digest
-       14:00 weather   14:20 headline   14:40 digest
+       13:00 weather   13:15 headline   13:30 news clip   13:45 digest
+       14:00 weather   14:15 headline   14:30 news clip   14:45 digest
 
-     At 20-minute blocks that lands exactly one spoken headline an hour, evenly
-     spaced, with nothing crowding anything else.
+     At 15-minute blocks that gives all four voices a slot of their own, evenly
+     spaced, landing on the same minutes every hour.
 
-     VOICE_BLOCK_MIN is the dial. 20 gives the pattern above; 15 speeds
-     everything up (and the three-way cycle then drifts round the hour rather
-     than landing on the same minutes); 30 slows it down. It must divide 60. */
-  var VOICE_BLOCK_MIN = 20;
+     VOICE_BLOCK_MIN is the dial, and it has to divide 60 AND divide evenly by
+     the length of VOICE_CYCLE, or the cycle drifts round the hour instead of
+     landing on fixed minutes. With four families that means 15. Dropping a
+     family from the cycle would make 20 right again. */
+  var VOICE_BLOCK_MIN = 15;
   var VOICE_SLOT_KEY = "eireVoiceSlot"; // localStorage: last block played
   var VOICE_ROT_PREFIX = "eireVoiceRot:"; // localStorage: per-set rotation index
   var VOICE_TICK_MS = 30000; // how often we check whether a clip is due
@@ -149,16 +150,15 @@
   // unavailable for any reason the news slot quietly plays a recorded clip.
   var HEADLINE_ENDPOINT = "/api/headline-audio";
   /* "The Reckoning" — the whole day's news written as one paragraph and spoken
-     in the ElevenLabs cloned voice. It takes over the :40 slot EVERY hour,
-     08:40 through 21:40. Everything else, Deco included, is untouched.
+     in the ElevenLabs cloned voice. It has the :45 slot EVERY hour, 08:45
+     through 21:45.
 
      That is hourly PLAYS, not hourly cost. The Worker still only writes and
      speaks a new bulletin twice a day — 09:40 and 16:40 Dublin time — and
      saves the recording; every other hour replays the saved one for free. The
-     schedule lives in the Worker (DIGEST_GEN_TIMES in src/worker.js), so
-     changing those two times does not need a change here. */
+     generation schedule lives in the Worker (DIGEST_GEN_TIMES in
+     src/worker.js), so changing those two times does not need a change here. */
   var DIGEST_ENDPOINT = "/api/digest-audio";
-  var DIGEST_EVERY_HOUR = true;
   var MOOD_REFRESH_MS = 30 * 60 * 1000; // re-poll mood every 30 min (Worker caches it ~3h)
 
   /* Stock Dublin image, used when an article has no image OR its image fails to
@@ -640,7 +640,7 @@
       setUpdated(w && w.updatedAt, err);
       lastWeather = w || lastWeather; // remember for ambience + voice selection
       applyAmbience(); // pick + (maybe) play the background track
-      maybePlayVoice(); // and (maybe) play this half-hour block's clip on top
+      maybePlayVoice(); // and (maybe) play this block's clip on top
     });
   }
 
@@ -965,15 +965,15 @@
      paused or replaced — short one-shot Dublin voice clips play alongside it
      through their own <audio id="voice"> element.
 
-     A fixed three-way timetable, one of each per hour at 20-minute blocks:
+     A fixed four-way timetable, one of each per hour at 15-minute blocks:
        :00  WEATHER   — rain / frost / wind / sun / partly / cloudy
-       :20  HEADLINE  — the real top story read aloud by Gemini
-       :40  DIGEST    — "The Reckoning", the whole day's news in the cloned
+       :15  HEADLINE  — the real top story read aloud by Gemini ("Deco")
+       :30  NEWS CLIP — goodnews / grand / mixed / heavy / grim / doom, from
+                        how today's sentiment compares to the trailing fortnight
+       :45  DIGEST    — "The Reckoning", the whole day's news in the cloned
                         ElevenLabs voice. Generated twice a day and replayed
-                        from the Worker's cache the rest of the time. If it is
-                        unavailable this falls back to a recorded news clip
-                        (goodnews / grand / mixed / heavy / grim / doom, from
-                        how today's sentiment compares to the trailing fortnight)
+                        from the Worker's cache the rest of the time; if it is
+                        unavailable it falls back to a recorded news clip
 
      Rules:
        • each block fires at most once, claimed in localStorage so a
@@ -1019,9 +1019,11 @@
     }
   }
 
-  /* Which block of the hour we're in, and what should play in it. A three-way
-     cycle: weather, then the spoken headline, then a recorded news clip. */
-  var VOICE_CYCLE = ["weather", "headline", "clip"];
+  /* Which block of the hour we're in, and what should play in it. A four-way
+     cycle: weather, the spoken headline, a recorded news-mood clip, then the
+     digest. Order matters — the two long spoken pieces (headline and digest)
+     are kept apart by a short recorded clip rather than back to back. */
+  var VOICE_CYCLE = ["weather", "headline", "clip", "digest"];
 
   function voiceSlot(date) {
     var idx = Math.floor(date.getMinutes() / VOICE_BLOCK_MIN);
@@ -1156,9 +1158,17 @@
     playRemoteVoice(DIGEST_ENDPOINT, "news");
   }
 
-  function isDigestHour() {
-    return DIGEST_EVERY_HOUR;
+  /* Whatever the current block is due to play, played now — used by the test
+     helpers, which skip the hour/slot/mute gates. Routes the two remote voices
+     properly instead of handing "headline"/"digest" to pickVoiceFile, which
+     knows nothing about them and would quietly return a weather clip. */
+  function playDueNow() {
+    var family = voiceSlot(new Date()).family;
+    if (family === "headline") return playHeadlineAudio();
+    if (family === "digest") return playDigestAudio();
+    playVoiceFile(pickVoiceFile(family === "clip" ? "news" : "weather"));
   }
+
 
   /* Stream the spoken headline from the Worker. Anything that goes wrong —
      no Gemini key, rate limit, outage — makes the <audio> element fire an
@@ -1168,7 +1178,7 @@
     playRemoteVoice(HEADLINE_ENDPOINT, "news");
   }
 
-  // The scheduled gate: one clip per half-hour block, daytime only, sound on.
+  // The scheduled gate: one voice per 15-minute block, daytime only, sound on.
   // Safe to call as often as we like — it no-ops unless a play is actually due.
   function maybePlayVoice() {
     if (!voiceEl || !voiceEnabled) return;
@@ -1181,14 +1191,15 @@
     var slot = voiceSlot(d);
     if (vGet(VOICE_SLOT_KEY) === slot.id) return; // this block already played
 
+    // Both remote voices claim the block BEFORE playing, so a slow fetch can't
+    // let the 30-second tick fire the same slot twice.
     if (slot.family === "headline") {
-      vSet(VOICE_SLOT_KEY, slot.id); // claim the block BEFORE playing (no double-fire)
+      vSet(VOICE_SLOT_KEY, slot.id);
       playHeadlineAudio();
       return;
     }
 
-    // The recorded-clip slot gives way to the full spoken digest.
-    if (slot.family === "clip" && isDigestHour()) {
+    if (slot.family === "digest") {
       vSet(VOICE_SLOT_KEY, slot.id);
       playDigestAudio();
       return;
@@ -1208,7 +1219,7 @@
   /* voiceTest("rain") plays the next clip from a set; voiceTest("rain3.wav")
      plays that exact file. Passing nothing plays whatever is currently due. */
   function voiceTest(which) {
-    if (!which) return playVoiceFile(pickVoiceFile(voiceSlot(new Date()).family));
+    if (!which) return playDueNow();
     if (VOICE_SETS[which]) return playVoiceFile(nextFromSet(which));
     playVoiceFile(/\.wav$/i.test(which) ? which : which + ".wav");
   }
@@ -1216,8 +1227,8 @@
   function exposeVoiceApi() {
     window.eireVoice = {
       play: function () {
-        playVoiceFile(pickVoiceFile(voiceSlot(new Date()).family));
-      }, // whatever this half-hour block would play, now
+        playDueNow();
+      }, // whatever this block would play, now
       test: voiceTest, // a named set or exact filename, now
       headline: function () {
         playHeadlineAudio();
@@ -1263,7 +1274,7 @@
       },
       reset: function () {
         vSet(VOICE_SLOT_KEY, "");
-        return "block cleared — this half-hour's clip will fire again";
+        return "block cleared — this block's voice will fire again";
       },
       mute: function () {
         voiceEnabled = false;
