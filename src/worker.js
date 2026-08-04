@@ -173,34 +173,31 @@ const DIGEST_STORY_COUNT = 20;       // how many headlines to survey
 const DIGEST_MAX_CHARS = 900;        // hard cost ceiling on what gets synthesised
 const DIGEST_TIMEOUT_MS = 60000;     // ElevenLabs is slower than Gemini
 
-/* Pauses. ElevenLabs honours break tags in the text, which is far more reliable
-   than hoping punctuation lands — the first version ran sentences together. */
-const DIGEST_BREAK_LONG = '<break time="0.9s" />'; // around the intro and outro
+/* Pauses — deliberately NOT inserted mechanically any more.
 
-/* Between stories. This used to be a single fixed 0.45s, and an identical gap
-   after every story is what made the bulletin sound like a list being read out:
-   fact, hard stop, fact, hard stop. Rotating through uneven beats breaks the
-   metronome, so it lands more like someone moving from one thing to the next.
-   Prime-ish, unequal values on purpose — nothing here should be a clean
-   multiple of anything else. */
-const DIGEST_BREAK_BEATS = [
-  '<break time="0.3s" />',
-  '<break time="0.55s" />',
-  '<break time="0.35s" />',
-  '<break time="0.45s" />',
-  '<break time="0.6s" />',
-];
+   Three versions of this got progressively worse. First a fixed break after
+   every story, which made it a list. Then rotating uneven breaks, which made it
+   a list with a limp. The mistake was structural: any tag we insert lands on a
+   sentence boundary, so it always sounds like an item ending rather than a man
+   pausing. Real speech pauses mid-thought, not at full stops.
 
-/* Written in three parts so the pauses can be placed exactly. */
+   So nothing is inserted between sentences at all. The rhythm now comes from
+   the writing — sentence length, commas, trailing "..." — which ElevenLabs
+   voices naturally. Only ONE tag survives, after the opening line, because that
+   beat genuinely is a gear change. */
+const DIGEST_BREAK_OPENING = '<break time="0.7s" />';
+
+/* One flowing take, not a list of items. The old intro/stories/outro shape is
+   what forced the read-out-the-news structure; commentary has to be written as
+   a single continuous piece or it reassembles itself into a bulletin. */
 const DIGEST_SCHEMA = {
   type: "object",
   properties: {
-    intro: { type: "string" },
-    stories: { type: "array", items: { type: "string" } },
-    outro: { type: "string" },
+    opening: { type: "string" },
+    take: { type: "string" },
   },
-  required: ["intro", "stories", "outro"],
-  propertyOrdering: ["intro", "stories", "outro"],
+  required: ["opening", "take"],
+  propertyOrdering: ["opening", "take"],
 };
 
 /* Delivery. Kept as a constant because it forms part of the audio cache key —
@@ -216,86 +213,77 @@ const DIGEST_VOICE_SETTINGS = {
 
 /* The written register.
 
-   The first version was pure atmosphere — "old sins in high places are finally
-   reckoned with" — and told a listener nothing about what had actually
-   happened. The tone now has to sit on top of real facts, not replace them:
-   grave in the PHRASING, concrete in the CONTENT.
+   This is COMMENTARY, not a bulletin. Deco already reads the headlines straight
+   at :15 — a second voice reciting the same facts thirty minutes later was
+   redundant, and reciting is what forced the list-like delivery. Charles's job
+   is his take on the day: he refers to what happened, but he is talking about
+   it, not reporting it.
 
-   The cadence paragraph is the Manson speech pattern — sideways entry, circling
-   back, homely images turned to menace, the enormous stated small — written out
-   as MANNER rather than as a name. Two reasons, and both matter:
+   The cadence is the Manson speech pattern — sideways entry, circling back,
+   homely images turned to menace, the enormous stated small — written out as
+   MANNER rather than as a name. Three reasons:
 
-     1. It is a delivery style, not an impersonation. The bulletin still never
-        claims to be anybody, and never puts words in a real person's mouth.
-     2. Practically, naming a real criminal figure in the prompt is the kind of
-        thing Gemini refuses. A refusal here doesn't degrade gracefully — the
-        digest throws, and the kiosk drops to a recorded clip. Describing the
-        pattern gets the sound reliably; naming him gets silence.
-
-   So the "do not speak as any real person" rule below stays, and is not in
-   tension with the cadence above. */
+     1. It is a delivery style, not an impersonation. The piece never claims to
+        be anybody and never puts words in a real person's mouth. That matters
+        more here than it did for a bulletin: real named people, some of them
+        newly dead, appear in this feed daily.
+     2. Naming a real criminal figure in the prompt is the kind of thing Gemini
+        refuses. A refusal doesn't degrade gracefully — the digest throws and
+        the kiosk drops to a recorded clip. Describing the pattern gets the
+        sound reliably; naming him gets silence.
+     3. The cruelty rule below is what keeps it listenable. A fatalistic voice
+        on the world is a register; the same voice sneering at a named grieving
+        family is just unpleasant, and would be the first thing to make this
+        unplayable in a kitchen. */
 const DIGEST_PROMPT =
-  "You are writing a short spoken news bulletin for a kitchen dashboard in Ireland. It is read " +
-  "aloud by a low, weary male voice. Return JSON with three parts.\n\n" +
-  "intro — ONE line, 8 to 16 words, spoken to one listener, whose name is Gav. Say his name " +
-  "exactly once, at the start — 'Gav.' standing alone, or worked into the opening words. Not " +
-  "'Hey Gav', not a greeting, not a weather report. After the name, an aphorism: a flat, " +
-  "declarative fragment of dark wisdom about the world and the people in it. Present tense. " +
-  "Unsettling, certain of itself, faintly menacing. It should sound like the opening of " +
-  "something he is not sure he wants to hear. State no OTHER name — not your own, not the " +
-  "programme's.\n\n" +
-  "The intro and outro must be PLAIN ENGLISH and instantly understandable, heard once, out " +
-  "loud, by someone not paying full attention. Ominous, not obscure. ONE concrete image at " +
-  "most, and it must be an ordinary thing. Do NOT stack images or run two metaphors together. " +
-  "Nothing surreal, nothing hallucinatory, no riddles, no invented proverbs, no phrases that " +
-  "sound deep but mean nothing. If a line could not be repeated back by the listener " +
-  "afterwards, it is wrong. Menace comes from saying a plain thing flatly, not from strange " +
-  "words.\n\n" +
-  "stories — THREE OR FOUR sentences, one per story, covering the most significant headlines. " +
-  "These must be CLEAR and CONCRETE, and completely plain — no character, no colour, no " +
-  "commentary. Name the real people, places and events. If someone died, say who and how. If a " +
-  "warning was issued, say what kind and where. Someone listening once while making tea must be " +
-  "able to say afterwards what happened. Never let a metaphor stand in for a fact. Write " +
-  "numbers as words.\n\n" +
-  "The stories must FLOW, not stack. Read aloud they should sound like a man moving through " +
-  "what happened, not reading a list. So: every sentence after the first opens with a short " +
-  "natural link before the fact — 'Then', 'And', 'Over in', 'Out in', 'Meanwhile', 'Same day' " +
-  "or similar. Vary them; never use the same one twice in one bulletin. Once, and only once in " +
-  "the whole bulletin, he may add a flat four-word-or-shorter remark AFTER a story — 'That one " +
-  "is bad.' or 'Same as last week.' Keep it dry and keep it rare. The factual sentence itself " +
-  "stays clean either way: the link goes in front of it and the remark comes after it, never " +
-  "inside it.\n\n" +
-  "You may also, at most ONCE in the whole bulletin, put 'Hm.' on its own between two stories, " +
-  "as a breath before moving on. Write it exactly as 'Hm.' and never anything else — no stage " +
-  "directions, no bracketed sounds, no asterisks. Never more than one.\n\n" +
-  "outro — ONE line, 8 to 16 words. A verdict on THIS day's news specifically, drawn from the " +
-  "stories you just wrote — not a generic sign-off. Fatalistic, aphoristic, and final. It should " +
-  "land like a lid closing.\n\n" +
-  "Character: all of the personality lives in the intro and the outro. There, the voice is a " +
-  "roadside preacher who has stopped expecting anything of anyone — cryptic, fatalistic, " +
-  "unimpressed by cruelty because he considers it ordinary. Plain hard words, no ornament, no " +
-  "jokes, never theatrical.\n\n" +
-  "His cadence in those two lines: the thought arrives sideways and circles back on itself " +
-  "rather than running straight. He starts somewhere odd, doubles back, then lands the point " +
-  "flat and hard, as though it were obvious and he is faintly impatient at having to say it. He " +
-  "reaches for homely, physical things — dust, clocks, roads, animals, weather, dirt — and turns " +
-  "them to menace. He states the enormous in a small, level way. He does not argue, explain or " +
+  "You are writing one short spoken piece for a kitchen dashboard in Ireland, read aloud by a " +
+  "low, weary male voice. It is NOT a news bulletin and NOT a summary. The headlines are read " +
+  "out straight elsewhere. This is one man's take on the day. Return JSON with two parts.\n\n" +
+  "opening — ONE line, 8 to 16 words, spoken to one listener, whose name is Gav. Say his name " +
+  "exactly once, at the start. Not a greeting. After the name, a flat declarative line about " +
+  "the world and the people in it, in the present tense — certain of itself, faintly menacing, " +
+  "the sound of something he is not sure he wants to hear.\n\n" +
+  "take — ONE flowing paragraph, 90 to 130 words, and this is the whole point of the piece. He " +
+  "has looked at today and he is saying what he makes of it. He moves through three or four of " +
+  "the day's actual events, but he is COMMENTING, not listing: what it says about people, what " +
+  "he has seen before, what it is going to come to. Each thing must still be recognisable — a " +
+  "listener should know which event he means — but woven into what he is saying, not announced. " +
+  "Never write a sentence that only states a fact and stops.\n\n" +
+  "It must read as ONE continuous thought. Do not write it as separate items. Let one thing " +
+  "lead into the next the way it does in speech — because of that, then, which is the same as, " +
+  "and after that. Vary sentence length hard: some long and winding, some three words. That " +
+  "variation is what makes it sound like a person, so do not write evenly.\n\n" +
+  "Character: a roadside preacher who has stopped expecting anything of anyone — cryptic, " +
+  "fatalistic, unimpressed by cruelty because he considers it ordinary. Plain hard words. No " +
+  "jokes, no ornament, never theatrical. His cadence: the thought arrives sideways and circles " +
+  "back rather than running straight. He starts somewhere odd, doubles back, then lands the " +
+  "point flat, as though it were obvious and he is faintly impatient at having to say it. He " +
+  "reaches for homely, physical things — dust, clocks, roads, animals, weather, dirt — and " +
+  "turns them to menace. He states the enormous in a small, level way. He does not argue or " +
   "persuade; he pronounces.\n\n" +
-  "Between those two lines the delivery goes completely straight: the stories are read as bare " +
-  "fact, which is what makes the framing land.\n\n" +
-  "Hesitation — in the intro and the outro ONLY. He is not a smooth talker. He loses the thread " +
-  "and picks it up again. In those two lines use a LITTLE of this: an ellipsis for a beat " +
-  "mid-sentence, or a phrase broken off and restarted, or one word repeated. About one stumble " +
-  "per line. Never more than two. It should sound like a man thinking, not a man malfunctioning, " +
-  "and the line must still parse as a sentence. The stories get NONE of this — they stay " +
-  "completely fluent, because a stumble in the middle of a fact makes the fact harder to hear.\n\n" +
+  "CLARITY, which matters more than atmosphere. Every line must be plain English and instantly " +
+  "understandable, heard once, out loud, by someone half paying attention. Ominous, not " +
+  "obscure. ONE concrete image at a time, and an ordinary one. Never stack images or run two " +
+  "metaphors together. Nothing surreal, no riddles, no invented proverbs, no phrases that sound " +
+  "deep and mean nothing. If a sentence could not be repeated back afterwards, rewrite it. The " +
+  "menace comes from saying a plain thing flatly, never from strange words.\n\n" +
+  "Hesitation: he is not a smooth talker. Two or three times in the whole piece — not more — " +
+  "let him pause mid-thought with an ellipsis, or break a phrase off and pick it up again, or " +
+  "repeat a word. Put these INSIDE sentences, never at a full stop, and never in the middle of " +
+  "naming a real event. It should sound like a man thinking, not a man malfunctioning.\n\n" +
   "Rules:\n" +
   "- Refer ONLY to what is in the headlines. Invent no events, names, numbers or facts.\n" +
+  "- Where you name a real person, place or number, get it exactly right. Write numbers as " +
+  "words.\n" +
+  "- Real people in these headlines are dead, bereaved, injured or accused. Never mock, taunt " +
+  "or gloat over any of them, and never address them. His fatalism is aimed at the world and at " +
+  "people in general, never down at a named individual. Cruelty about a real named person is " +
+  "the one thing that ruins the piece.\n" +
   "- No source names, no bullet points, no quotation marks, no headings.\n" +
   "- Never write a stage direction or a sound effect. Nothing in square brackets, nothing in " +
-  "asterisks, no 'clears throat', no 'sighs'. Every character you write WILL be read out as a " +
-  "word. Write only what is meant to be spoken.\n" +
-  "- Do not speak as any real person. Address the listener only as described above.\n\n" +
+  "asterisks, no 'clears throat', no 'sighs'. Every character you write WILL be spoken as a " +
+  "word. Write only what is meant to be said aloud.\n" +
+  "- Do not claim to be any real person, living or dead, and do not name yourself.\n\n" +
   "Headlines:\n";
 
 /* Reader-engagement filler that shouldn't be read out as the top story.
@@ -1042,40 +1030,35 @@ async function writeDigest(items, apiKey) {
       .replace(/\s+/g, " ")
       .replace(/^["'\s]+|["'\s]+$/g, "")
       .trim();
-  const intro = tidy(parsed.intro);
-  const outro = tidy(parsed.outro);
-  const stories = (Array.isArray(parsed.stories) ? parsed.stories : []).map(tidy).filter(Boolean);
-  if (!stories.length) throw new Error("Digest returned no stories");
+  const opening = tidy(parsed.opening);
+  const take = tidy(parsed.take);
+  if (!take) throw new Error("Digest returned no take");
 
-  return assembleDigest(intro, stories, outro);
+  return assembleDigest(opening, take);
 }
 
 /* Stitch the three parts together with explicit pauses, then enforce the hard
    cost ceiling. Stories are dropped whole rather than truncated mid-sentence,
    and the outro is always kept so the bulletin still lands properly. */
-function assembleDigest(intro, stories, outro) {
-  const build = (list) => {
-    const parts = [];
-    if (intro) parts.push(intro, DIGEST_BREAK_LONG);
-    // Uneven beats between stories — see DIGEST_BREAK_BEATS. Story i is joined
-    // to the next by beat i, so no two consecutive gaps are the same length.
-    const chained = list.reduce(
-      (acc, s, i) => (i === 0 ? s : acc + " " + DIGEST_BREAK_BEATS[(i - 1) % DIGEST_BREAK_BEATS.length] + " " + s),
-      ""
-    );
-    parts.push(chained);
-    if (outro) parts.push(DIGEST_BREAK_LONG, outro);
-    return parts.join(" ");
-  };
+/* The opening line, one beat, then the take — and nothing inserted inside the
+   take itself. Its rhythm is the writing's job now, not ours. */
+function assembleDigest(opening, take) {
+  const join = (body) => (opening ? opening + " " + DIGEST_BREAK_OPENING + " " + body : body);
 
-  let kept = stories.slice();
-  let out = build(kept);
-  while (out.length > DIGEST_MAX_CHARS && kept.length > 1) {
-    kept.pop();
-    out = build(kept);
-  }
-  // Still over with a single story: trim that one back to a sentence end.
-  if (out.length > DIGEST_MAX_CHARS) out = out.slice(0, DIGEST_MAX_CHARS);
+  let out = join(take);
+  if (out.length <= DIGEST_MAX_CHARS) return out;
+
+  /* Over the cost ceiling. Drop whole sentences off the end rather than cutting
+     mid-word — this used to hard-slice at 900 characters, which was fine when
+     the tail was a self-contained story but would now cut the man off mid-
+     sentence, which is exactly the hard stop we just spent the day removing. */
+  const sentences = take.match(/[^.!?]+[.!?]+(\s|$)/g) || [take];
+  let kept = sentences.slice();
+  while (kept.length > 1 && join(kept.join("").trim()).length > DIGEST_MAX_CHARS) kept.pop();
+
+  out = join(kept.join("").trim());
+  // A single sentence still over budget: last resort, trim at a word boundary.
+  if (out.length > DIGEST_MAX_CHARS) out = out.slice(0, DIGEST_MAX_CHARS).replace(/\s+\S*$/, "") + ".";
   return out;
 }
 
