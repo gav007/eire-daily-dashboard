@@ -28,22 +28,34 @@
 // Validated, healthy feeds (see validate-feeds.js / BACKEND_NOTES.md).
 // `limit` = how many of each feed's items to keep BEFORE merging.
 const FEEDS = [
-  { source: "RTÉ News",    url: "https://www.rte.ie/feeds/rss/?index=/news/&limit=100", limit: 10 },
+  { source: "RTÉ News", url: "https://www.rte.ie/feeds/rss/?index=/news/&limit=100", limit: 10 },
   // Extra RTÉ sections to widen the pool. Same "RTÉ News" badge so they share the
   // src-rte styling on the frontend; merge+sort+dedupe-by-URL handles any overlap
   // with the main /news/ feed. Both verified 100% media:content image coverage.
-  { source: "RTÉ News",    url: "https://www.rte.ie/feeds/rss/?index=/news/business/&limit=100",   limit: 5 },
-  { source: "RTÉ News",    url: "https://www.rte.ie/feeds/rss/?index=/news/technology/&limit=100", limit: 5 },
-  { source: "TheJournal",  url: "https://www.thejournal.ie/feed/",                       limit: 10 },
+  {
+    source: "RTÉ News",
+    url: "https://www.rte.ie/feeds/rss/?index=/news/business/&limit=100",
+    limit: 5,
+  },
+  {
+    source: "RTÉ News",
+    url: "https://www.rte.ie/feeds/rss/?index=/news/technology/&limit=100",
+    limit: 5,
+  },
+  { source: "TheJournal", url: "https://www.thejournal.ie/feed/", limit: 10 },
   // Dublin-local only. We deliberately do NOT also pull /news/ — it overlaps
   // heavily with this feed and would create duplicates.
-  { source: "Dublin Live", url: "https://www.dublinlive.ie/news/dublin-news/?service=rss", limit: 5 }
+  {
+    source: "Dublin Live",
+    url: "https://www.dublinlive.ie/news/dublin-news/?service=rss",
+    limit: 5,
+  },
 ];
 
-const CACHE_SECONDS = 600;   // 10 minutes — how long a good API response is reused
+const CACHE_SECONDS = 600; // 10 minutes — how long a good API response is reused
 const FEED_TIMEOUT_MS = 8000; // give up on a slow feed after 8s (others still return)
 const WEATHER_TIMEOUT_MS = 8000; // give up on slow weather data after 8s
-const SUMMARY_MAX = 220;     // trim summaries so cards stay tidy
+const SUMMARY_MAX = 220; // trim summaries so cards stay tidy
 
 // Dublin coordinates used by the kiosk weather card.
 const WEATHER_URL =
@@ -61,14 +73,14 @@ const WEATHER_URL =
    Cloudflare secret in prod / .dev.vars locally) — never in code or the frontend.
    If the key is missing or Gemini fails, /api/mood returns { available:false }
    and the dashboard simply hides the gauge. */
-const MOOD_MODEL = "gemini-3.1-flash-lite";  // change here if you switch models
+const MOOD_MODEL = "gemini-3.1-flash-lite"; // change here if you switch models
 const MOOD_API_URL =
   "https://generativelanguage.googleapis.com/v1beta/models/" + MOOD_MODEL + ":generateContent";
-const MOOD_CACHE_SECONDS = 3 * 60 * 60;   // reuse a computed mood for ~3 hours
-const MOOD_FAIL_CACHE_SECONDS = 30 * 60;  // after a failure, wait ~30 min before retrying Gemini
-const MOOD_STORY_COUNT = 24;              // analyse up to the top 24 stories
-const MOOD_SUMMARY_MAX = 160;             // trim each summary we send to Gemini (less data)
-const MOOD_TIMEOUT_MS = 20000;            // give Gemini up to 20s, then fall back quietly
+const MOOD_CACHE_SECONDS = 3 * 60 * 60; // reuse a computed mood for ~3 hours
+const MOOD_FAIL_CACHE_SECONDS = 30 * 60; // after a failure, wait ~30 min before retrying Gemini
+const MOOD_STORY_COUNT = 24; // analyse up to the top 24 stories
+const MOOD_SUMMARY_MAX = 160; // trim each summary we send to Gemini (less data)
+const MOOD_TIMEOUT_MS = 20000; // give Gemini up to 20s, then fall back quietly
 
 /* ---------- Rolling baseline for the mood score ----------
    The raw score is almost always negative, because news is. Measured against
@@ -84,9 +96,9 @@ const MOOD_TIMEOUT_MS = 20000;            // give Gemini up to 20s, then fall ba
    the whole feature degrades quietly: no log, no baseline, and /api/mood keeps
    returning exactly what it returns today. Same graceful-fallback contract as
    a missing GEMINI_API_KEY. */
-const MOOD_HISTORY_KEY = "mood:history";  // single KV key holding the whole log
-const MOOD_BASELINE_DAYS = 14;            // trailing window the baseline is computed over
-const MOOD_HISTORY_MAX = 400;             // hard cap on stored readings (~7 weeks at 8/day)
+const MOOD_HISTORY_KEY = "mood:history"; // single KV key holding the whole log
+const MOOD_BASELINE_DAYS = 14; // trailing window the baseline is computed over
+const MOOD_HISTORY_MAX = 400; // hard cap on stored readings (~7 weeks at 8/day)
 // Below this many readings the baseline is not trustworthy, so we report
 // ready:false and the frontend falls back to the raw label. At a 3h cache
 // that's roughly two days of warm-up.
@@ -114,7 +126,7 @@ const TTS_VOICE = "Charon"; // 30 available; Charon is a clear, informative read
    allowed to invent or reword anything. */
 const TTS_STYLE =
   "Read the headline exactly as written. Speak as Deco, a working-class North " +
-  "Dublin man in his forties. Use a low, slightly gravelly voice with an " +
+  "Dublin man in his forties. Use a Ultra low, slightly gravelly voice with an " +
   "unmistakable natural Dublin accent—not British, Scottish, posh, or generic " +
   "'Irish'. Deliver it conversationally, like a dry observation made across a " +
   "kitchen table. Sound mildly sceptical and quietly amused, as though none of " +
@@ -124,10 +136,10 @@ const TTS_STYLE =
   "add, remove or rewrite any words.";
 const TTS_URL =
   "https://generativelanguage.googleapis.com/v1beta/models/" + TTS_MODEL + ":generateContent";
-const TTS_CACHE_PREFIX = "tts:";     // shares the MOOD_LOG namespace, separate key space
-const TTS_CACHE_TTL = 6 * 60 * 60;   // drop cached audio after ~6h
-const TTS_TIMEOUT_MS = 30000;        // voice generation is slower than text
-const TTS_TITLE_MAX = 240;           // keep the spoken line short
+const TTS_CACHE_PREFIX = "tts:"; // shares the MOOD_LOG namespace, separate key space
+const TTS_CACHE_TTL = 6 * 60 * 60; // drop cached audio after ~6h
+const TTS_TIMEOUT_MS = 30000; // voice generation is slower than text
+const TTS_TITLE_MAX = 240; // keep the spoken line short
 
 /* Reading "whatever is newest" sounds fair but isn't: TheJournal publishes far
    more often than RTÉ, so it took the top slot most of the time even though
@@ -168,10 +180,10 @@ const DIGEST_GEN_TIMES = [
   { hour: 9, minute: 40, label: "am" },
   { hour: 16, minute: 40, label: "pm" },
 ];
-const DIGEST_TTL = 26 * 60 * 60;     // outlives the longest gap (16:40 -> 09:40) with room to spare
-const DIGEST_STORY_COUNT = 20;       // how many headlines to survey
-const DIGEST_MAX_CHARS = 900;        // hard cost ceiling on what gets synthesised
-const DIGEST_TIMEOUT_MS = 60000;     // ElevenLabs is slower than Gemini
+const DIGEST_TTL = 26 * 60 * 60; // outlives the longest gap (16:40 -> 09:40) with room to spare
+const DIGEST_STORY_COUNT = 20; // how many headlines to survey
+const DIGEST_MAX_CHARS = 900; // hard cost ceiling on what gets synthesised
+const DIGEST_TIMEOUT_MS = 60000; // ElevenLabs is slower than Gemini
 
 /* Pauses — deliberately NOT inserted mechanically any more.
 
@@ -204,11 +216,11 @@ const DIGEST_SCHEMA = {
    change a setting and the next play is regenerated rather than replaying the
    old performance. */
 const DIGEST_VOICE_SETTINGS = {
-  stability: 0.50,        // a shade looser, which lets more character through
+  stability: 0.5, // a shade looser, which lets more character through
   similarity_boost: 0.85, // hold the cloned voice's character
-  style: 0.40,            // more expressive than before, still not theatrical
+  style: 0.4, // more expressive than before, still not theatrical
   use_speaker_boost: true,
-  speed: 0.82,            // 0.78 was a drag; nudged back up. 1.0 is normal pace
+  speed: 0.82, // 0.78 was a drag; nudged back up. 1.0 is normal pace
 };
 
 /* The written register.
@@ -236,63 +248,66 @@ const DIGEST_VOICE_SETTINGS = {
         family is just unpleasant, and would be the first thing to make this
         unplayable in a kitchen. */
 const DIGEST_PROMPT =
-  "You are writing one short spoken piece for a kitchen dashboard in Ireland, read aloud by a " +
-  "low, weary male voice. It is NOT a news bulletin and NOT a summary. The headlines are read " +
-  "out straight elsewhere. This is one man's take on the day. Return JSON with two parts.\n\n" +
-  "opening — ONE line, 8 to 16 words, spoken to one listener, whose name is Gav. Say his name " +
-  "exactly once, at the start. Not a greeting. After the name, a flat declarative line about " +
-  "the world and the people in it, in the present tense — certain of itself, faintly menacing, " +
-  "the sound of something he is not sure he wants to hear.\n\n" +
-  "take — ONE flowing paragraph, 90 to 130 words, and this is the whole point of the piece. He " +
-  "has looked at today and he is saying what he makes of it. He moves through three or four of " +
-  "the day's actual events, but he is COMMENTING, not listing: what it says about people, what " +
-  "he has seen before, what it is going to come to. Each thing must still be recognisable — a " +
-  "listener should know which event he means — but woven into what he is saying, not announced. " +
-  "Never write a sentence that only states a fact and stops.\n\n" +
-  "It must read as ONE continuous thought. Do not write it as separate items. Let one thing " +
-  "lead into the next the way it does in speech — because of that, then, which is the same as, " +
-  "and after that. Vary sentence length hard: some long and winding, some three words. That " +
-  "variation is what makes it sound like a person, so do not write evenly.\n\n" +
-  "Character: a roadside preacher who has stopped expecting anything of anyone — cryptic, " +
-  "fatalistic, unimpressed by cruelty because he considers it ordinary. Plain hard words. No " +
-  "jokes, no ornament, never theatrical. His cadence: the thought arrives sideways and circles " +
-  "back rather than running straight. He starts somewhere odd, doubles back, then lands the " +
-  "point flat, as though it were obvious and he is faintly impatient at having to say it. He " +
-  "reaches for homely, physical things — dust, clocks, roads, animals, weather, dirt — and " +
-  "turns them to menace. He states the enormous in a small, level way. He does not argue or " +
-  "persuade; he pronounces.\n\n" +
-  "CLARITY, which matters more than atmosphere. Every line must be plain English and instantly " +
-  "understandable, heard once, out loud, by someone half paying attention. Ominous, not " +
-  "obscure. ONE concrete image at a time, and an ordinary one. Never stack images or run two " +
-  "metaphors together. Nothing surreal, no riddles, no invented proverbs, no phrases that sound " +
-  "deep and mean nothing. If a sentence could not be repeated back afterwards, rewrite it. The " +
-  "menace comes from saying a plain thing flatly, never from strange words.\n\n" +
-  "Hesitation: he is not a smooth talker. Two or three times in the whole piece — not more — " +
-  "let him pause mid-thought with an ellipsis, or break a phrase off and pick it up again, or " +
-  "repeat a word. Put these INSIDE sentences, never at a full stop, and never in the middle of " +
-  "naming a real event. It should sound like a man thinking, not a man malfunctioning.\n\n" +
-  "Rules:\n" +
-  "- Refer ONLY to what is in the headlines. Invent no events, names, numbers or facts.\n" +
-  "- Where you name a real person, place or number, get it exactly right. Write numbers as " +
-  "words.\n" +
-  "- Real people in these headlines are dead, bereaved, injured or accused. Never mock, taunt " +
-  "or gloat over any of them, and never address them. His fatalism is aimed at the world and at " +
-  "people in general, never down at a named individual. Cruelty about a real named person is " +
-  "the one thing that ruins the piece.\n" +
-  "- No source names, no bullet points, no quotation marks, no headings.\n" +
-  "- Never write a stage direction or a sound effect. Nothing in square brackets, nothing in " +
-  "asterisks, no 'clears throat', no 'sighs'. Every character you write WILL be spoken as a " +
-  "word. Write only what is meant to be said aloud.\n" +
-  "- Do not claim to be any real person, living or dead, and do not name yourself.\n\n" +
+  "Write a short spoken commentary on today's news for one listener named Gav. " +
+  "It will be read by a low, rough, weary male voice. This is NOT a news bulletin. " +
+  "The listener already knows the headlines. Your job is to give one clear, unsettling take on the day.\n\n" +
+
+  "Return JSON with exactly two fields: opening and take.\n\n" +
+
+  "opening — One sentence, 8 to 14 words. Begin with Gav. No greeting. " +
+  "Make one plain observation about people or the world suggested by today's headlines.\n\n" +
+
+  "take — 90 to 120 words. Use exactly THREE of today's events. " +
+  "Write four or five sentences total. The events must be recognisable, but do not announce them like headlines. " +
+  "Move naturally from one event to the next and finish with one simple observation that ties the whole day together.\n\n" +
+
+  "VOICE AND MANNER:\n" +
+  "- Calm, low, weary and certain.\n" +
+  "- Plain everyday English.\n" +
+  "- Slightly unsettling because of what he notices, not because the wording is bizarre.\n" +
+  "- He sounds like a man who has seen the same human behaviour many times before.\n" +
+  "- He occasionally approaches a point indirectly, then states it plainly.\n" +
+  "- Dry and serious. Never theatrical. Never poetic for its own sake.\n" +
+  "- Use at most ONE ordinary physical image in the entire piece: a road, rain, dirt, a clock, a door, an animal, etc.\n" +
+  "- At most ONE mid-sentence hesitation using ... in the entire piece.\n\n" +
+
+  "MOST IMPORTANT: CLARITY.\n" +
+  "Every sentence must make immediate literal sense when heard once. " +
+  "Do not write riddles, invented sayings, surreal comparisons, mystical language or stacked metaphors. " +
+  "Do not jump randomly between ideas. One thought must cause the next thought.\n\n" +
+
+  "FACT RULES:\n" +
+  "- Use only information present in the headlines.\n" +
+  "- Invent no facts, names, numbers or events.\n" +
+  "- Never mock victims, dead people, injured people, grieving families or named individuals.\n" +
+  "- No source names, headings, bullet points, quotation marks or stage directions.\n" +
+  "- Do not claim to be any real person and do not name yourself.\n\n" +
+
+  "Before returning the answer, silently check: does this sound like one man making one coherent point, " +
+  "rather than several strange observations stitched together? If not, rewrite it.\n\n" +
+
   "Headlines:\n";
 
 /* Reader-engagement filler that shouldn't be read out as the top story.
    TheJournal in particular puts quizzes and polls in its news feed. */
 const HEADLINE_SKIP_PREFIX = /^\s*(quiz|poll|competition|sponsored|advertisement|win a\b)/i;
-const HEADLINE_SKIP_QUESTION = /^\s*(should|do you|how much do you|can you|are you|what'?s your)\b/i;
+const HEADLINE_SKIP_QUESTION =
+  /^\s*(should|do you|how much do you|can you|are you|what'?s your)\b/i;
 
 // Allowed values mirrored in the prompt. Topic list matches the frontend legend.
-const MOOD_TOPICS = ["politics","crime","economy","housing","transport","weather","world","local","sport","culture","other"];
+const MOOD_TOPICS = [
+  "politics",
+  "crime",
+  "economy",
+  "housing",
+  "transport",
+  "weather",
+  "world",
+  "local",
+  "sport",
+  "culture",
+  "other",
+];
 
 // Strict JSON contract for Gemini (OpenAPI subset). responseMimeType + this
 // schema force the model to return exactly this shape — no prose, no markdown.
@@ -304,20 +319,36 @@ const MOOD_SCHEMA = {
       items: {
         type: "object",
         properties: {
-          i:              { type: "integer" },
-          sentiment:      { type: "string", enum: ["positive", "neutral", "negative"] },
+          i: { type: "integer" },
+          sentiment: { type: "string", enum: ["positive", "neutral", "negative"] },
           sentimentScore: { type: "integer" },
-          severity:       { type: "string", enum: ["light", "normal", "serious", "heavy"] },
-          severityScore:  { type: "integer" },
-          topic:          { type: "string", enum: MOOD_TOPICS },
-          confidence:     { type: "number" }
+          severity: { type: "string", enum: ["light", "normal", "serious", "heavy"] },
+          severityScore: { type: "integer" },
+          topic: { type: "string", enum: MOOD_TOPICS },
+          confidence: { type: "number" },
         },
-        required: ["i", "sentiment", "sentimentScore", "severity", "severityScore", "topic", "confidence"],
-        propertyOrdering: ["i", "sentiment", "sentimentScore", "severity", "severityScore", "topic", "confidence"]
-      }
-    }
+        required: [
+          "i",
+          "sentiment",
+          "sentimentScore",
+          "severity",
+          "severityScore",
+          "topic",
+          "confidence",
+        ],
+        propertyOrdering: [
+          "i",
+          "sentiment",
+          "sentimentScore",
+          "severity",
+          "severityScore",
+          "topic",
+          "confidence",
+        ],
+      },
+    },
   },
-  required: ["stories"]
+  required: ["stories"],
 };
 
 /* ---------- Entry point ---------- */
@@ -380,7 +411,7 @@ export default {
     // Not an API route -> let the static asset server handle it.
     if (env.ASSETS) return env.ASSETS.fetch(request);
     return new Response("Not found", { status: 404 });
-  }
+  },
 };
 
 /* ============================================================
@@ -409,7 +440,7 @@ async function handleNews(request, ctx) {
   // --- 4. Build response + store in the edge cache for 10 minutes ----------
   const payload = { items, updatedAt: new Date().toISOString() };
   const response = json(payload, 200, {
-    "Cache-Control": `public, max-age=${CACHE_SECONDS}`
+    "Cache-Control": `public, max-age=${CACHE_SECONDS}`,
   });
   // cache.put must not block the response, so do it in the background.
   ctx.waitUntil(cache.put(cacheKey, response.clone()));
@@ -475,16 +506,13 @@ async function handleWeather(request, ctx) {
   try {
     const payload = await fetchWeather();
     const response = json(payload, 200, {
-      "Cache-Control": `public, max-age=${CACHE_SECONDS}`
+      "Cache-Control": `public, max-age=${CACHE_SECONDS}`,
     });
     ctx.waitUntil(cache.put(cacheKey, response.clone()));
     return response;
   } catch (err) {
     console.warn("Weather failed:", String(err));
-    return json(
-      { error: "Weather data unavailable", updatedAt: new Date().toISOString() },
-      502
-    );
+    return json({ error: "Weather data unavailable", updatedAt: new Date().toISOString() }, 502);
   }
 }
 
@@ -493,8 +521,8 @@ async function fetchWeather() {
     redirect: "follow",
     signal: AbortSignal.timeout(WEATHER_TIMEOUT_MS),
     headers: {
-      "Accept": "application/json"
-    }
+      Accept: "application/json",
+    },
   });
 
   if (!res.ok) throw new Error(`Open-Meteo HTTP ${res.status}`);
@@ -554,13 +582,13 @@ function mapOpenMeteoWeather(data) {
     today: {
       max: Math.round(todayMax),
       min: Math.round(todayMin),
-      rainChance: Math.round(todayRain)
+      rainChance: Math.round(todayRain),
     },
     tomorrow: {
       max: Math.round(tomorrowMax),
       min: Math.round(tomorrowMin),
-      rainChance: Math.round(tomorrowRain)
-    }
+      rainChance: Math.round(tomorrowRain),
+    },
   };
 }
 
@@ -574,7 +602,8 @@ function weatherCodeToCondition(code) {
   if (code === 51 || code === 53 || code === 55 || code === 56 || code === 57) return "Drizzle";
   if (code === 61 || code === 63 || code === 66 || code === 80 || code === 81) return "Rain";
   if (code === 65 || code === 67 || code === 82) return "Heavy rain";
-  if (code === 71 || code === 73 || code === 75 || code === 77 || code === 85 || code === 86) return "Snow";
+  if (code === 71 || code === 73 || code === 75 || code === 77 || code === 85 || code === 86)
+    return "Snow";
   if (code === 95 || code === 96 || code === 99) return "Thunderstorm";
   return "Cloudy";
 }
@@ -625,7 +654,11 @@ async function handleMood(request, env, ctx) {
     const items = await getNewsItems(request);
     const top = (items || []).slice(0, MOOD_STORY_COUNT);
     if (top.length < 3) {
-      return json({ available: false, reason: "not_enough_news", updatedAt: new Date().toISOString() });
+      return json({
+        available: false,
+        reason: "not_enough_news",
+        updatedAt: new Date().toISOString(),
+      });
     }
 
     const classifications = await classifyWithGemini(top, apiKey);
@@ -647,17 +680,21 @@ async function handleMood(request, env, ctx) {
 
     // Append after responding — the log is for the NEXT reading's baseline, so
     // nothing here needs to block the response.
-    ctx.waitUntil(appendMoodReading(env, {
-      t: Date.now(),
-      score: mood.score,
-      avg: mood.avgSentiment,
-      med: mood.medianSentiment,
-      neg: mood.counts ? mood.counts.negative : null,
-      heavy: mood.heavyCount,
-      n: mood.analyzed
-    }));
+    ctx.waitUntil(
+      appendMoodReading(env, {
+        t: Date.now(),
+        score: mood.score,
+        avg: mood.avgSentiment,
+        med: mood.medianSentiment,
+        neg: mood.counts ? mood.counts.negative : null,
+        heavy: mood.heavyCount,
+        n: mood.analyzed,
+      })
+    );
 
-    const response = json(payload, 200, { "Cache-Control": `public, max-age=${MOOD_CACHE_SECONDS}` });
+    const response = json(payload, 200, {
+      "Cache-Control": `public, max-age=${MOOD_CACHE_SECONDS}`,
+    });
     ctx.waitUntil(cache.put(cacheKey, response.clone()));
     return response;
   } catch (err) {
@@ -669,7 +706,7 @@ async function handleMood(request, env, ctx) {
         available: false,
         reason: "gemini_error",
         detail: String((err && err.message) || err).slice(0, 200),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       200,
       { "Cache-Control": `public, max-age=${MOOD_FAIL_CACHE_SECONDS}` }
@@ -687,31 +724,34 @@ async function classifyWithGemini(stories, apiKey) {
     source: s.source || "",
     title: s.title || "",
     summary: s.summary ? String(s.summary).slice(0, MOOD_SUMMARY_MAX) : "",
-    date: s.published ? String(s.published).slice(0, 10) : ""
+    date: s.published ? String(s.published).slice(0, 10) : "",
   }));
 
   const prompt =
     "You are a newsroom classifier for an Irish news dashboard. " +
     "Judge each story by the substance of its headline and summary, not by sensational wording. " +
     "Return ONLY JSON matching the schema — no commentary, no markdown.\n" +
-    "For each story keep its \"i\" index and set:\n" +
+    'For each story keep its "i" index and set:\n' +
     "- sentiment: positive | neutral | negative (overall tone for a general reader)\n" +
     "- sentimentScore: integer from -100 (very negative) to 100 (very positive)\n" +
     "- severity: light | normal | serious | heavy (how grave the subject is)\n" +
     "- severityScore: integer from 0 (trivial) to 100 (death, disaster, war, tragedy)\n" +
-    "- topic: one of " + MOOD_TOPICS.join(", ") + "\n" +
+    "- topic: one of " +
+    MOOD_TOPICS.join(", ") +
+    "\n" +
     "- confidence: number from 0 to 1\n\n" +
-    "Stories:\n" + JSON.stringify(compact);
+    "Stories:\n" +
+    JSON.stringify(compact);
 
   const body = {
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     generationConfig: {
       responseMimeType: "application/json",
-      responseSchema: MOOD_SCHEMA
+      responseSchema: MOOD_SCHEMA,
       // Temperature deliberately omitted: Gemini 3 can loop if it's lowered, and
       // the schema already forces deterministic structure. No thinking field is
       // sent either (avoids 3.x 400s); flash-lite is fast enough for ~24 items.
-    }
+    },
   };
 
   const res = await fetch(MOOD_API_URL, {
@@ -720,9 +760,9 @@ async function classifyWithGemini(stories, apiKey) {
     headers: {
       "Content-Type": "application/json",
       // Key travels in a header, not the URL, so it never lands in any log line.
-      "x-goog-api-key": apiKey
+      "x-goog-api-key": apiKey,
     },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {
@@ -740,9 +780,12 @@ async function classifyWithGemini(stories, apiKey) {
   } catch (e) {
     throw new Error("Gemini JSON parse failed");
   }
-  const arr = parsed && Array.isArray(parsed.stories)
-    ? parsed.stories
-    : (Array.isArray(parsed) ? parsed : null);
+  const arr =
+    parsed && Array.isArray(parsed.stories)
+      ? parsed.stories
+      : Array.isArray(parsed)
+        ? parsed
+        : null;
   if (!arr) throw new Error("Gemini JSON missing 'stories' array");
   return arr;
 }
@@ -777,7 +820,9 @@ function aggregateMood(classifications) {
   const avg = sScores.reduce((a, b) => a + b, 0) / n;
   const med = median(sScores);
 
-  let pos = 0, neu = 0, neg = 0;
+  let pos = 0,
+    neu = 0,
+    neg = 0;
   valid.forEach((c) => {
     if (c.sentiment === "positive") pos++;
     else if (c.sentiment === "negative") neg++;
@@ -809,7 +854,7 @@ function aggregateMood(classifications) {
     counts: pctSumTo100(pos, neu, neg, n),
     topTopics,
     heavyCount,
-    analyzed: n
+    analyzed: n,
   };
 }
 
@@ -850,7 +895,10 @@ async function handleDigestAudio(request, env, ctx) {
       });
       if (!r.ok) {
         const t = await r.text().catch(() => "");
-        return json({ available: false, reason: "voices_http_" + r.status, detail: t.slice(0, 200) }, 503);
+        return json(
+          { available: false, reason: "voices_http_" + r.status, detail: t.slice(0, 200) },
+          503
+        );
       }
       const d = await r.json();
       return json({
@@ -864,7 +912,10 @@ async function handleDigestAudio(request, env, ctx) {
         })),
       });
     } catch (e) {
-      return json({ available: false, reason: "voices_error", detail: String(e).slice(0, 200) }, 503);
+      return json(
+        { available: false, reason: "voices_error", detail: String(e).slice(0, 200) },
+        503
+      );
     }
   }
 
@@ -891,8 +942,13 @@ async function handleDigestAudio(request, env, ctx) {
     const cacheKey =
       DIGEST_AUDIO_KEY +
       hashText(
-        paragraph + "|" + DIGEST_VOICE_ID + "|" + DIGEST_ELEVEN_MODEL + "|" +
-        JSON.stringify(DIGEST_VOICE_SETTINGS)
+        paragraph +
+          "|" +
+          DIGEST_VOICE_ID +
+          "|" +
+          DIGEST_ELEVEN_MODEL +
+          "|" +
+          JSON.stringify(DIGEST_VOICE_SETTINGS)
       );
 
     if (env.MOOD_LOG) {
@@ -916,7 +972,11 @@ async function handleDigestAudio(request, env, ctx) {
   } catch (err) {
     console.warn("Digest failed:", String(err));
     return json(
-      { available: false, reason: "digest_error", detail: String((err && err.message) || err).slice(0, 200) },
+      {
+        available: false,
+        reason: "digest_error",
+        detail: String((err && err.message) || err).slice(0, 200),
+      },
       503
     );
   }
@@ -960,8 +1020,12 @@ async function getDigestText(request, env, geminiKey, force) {
 function dublinClock(d) {
   const parts = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Europe/Dublin",
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
   }).formatToParts(d);
   const get = (t) => (parts.find((p) => p.type === t) || {}).value;
   return {
@@ -1024,9 +1088,9 @@ async function writeDigest(items, apiKey) {
      replayed hourly. Cheap to strip, expensive to miss. */
   const tidy = (s) =>
     String(s || "")
-      .replace(/\[[^\]]*\]/g, " ")      // [clears throat], [sighs]
-      .replace(/\*[^*]*\*/g, " ")       // *pauses*
-      .replace(/\([^)]*\)/g, " ")       // (quietly)
+      .replace(/\[[^\]]*\]/g, " ") // [clears throat], [sighs]
+      .replace(/\*[^*]*\*/g, " ") // *pauses*
+      .replace(/\([^)]*\)/g, " ") // (quietly)
       .replace(/\s+/g, " ")
       .replace(/^["'\s]+|["'\s]+$/g, "")
       .trim();
@@ -1058,7 +1122,8 @@ function assembleDigest(opening, take) {
 
   out = join(kept.join("").trim());
   // A single sentence still over budget: last resort, trim at a word boundary.
-  if (out.length > DIGEST_MAX_CHARS) out = out.slice(0, DIGEST_MAX_CHARS).replace(/\s+\S*$/, "") + ".";
+  if (out.length > DIGEST_MAX_CHARS)
+    out = out.slice(0, DIGEST_MAX_CHARS).replace(/\s+\S*$/, "") + ".";
   return out;
 }
 
@@ -1170,7 +1235,11 @@ async function handleHeadlineAudio(request, env, ctx) {
   } catch (err) {
     console.warn("TTS failed:", String(err));
     return json(
-      { available: false, reason: "tts_error", detail: String((err && err.message) || err).slice(0, 200) },
+      {
+        available: false,
+        reason: "tts_error",
+        detail: String((err && err.message) || err).slice(0, 200),
+      },
       503
     );
   }
@@ -1221,12 +1290,13 @@ async function pickHeadlineItem(env, items) {
     return {
       item: hit,
       nextSource: sources[next],
-      advance: env && env.MOOD_LOG
-        ? () =>
-            env.MOOD_LOG.put(HEADLINE_TURN_KEY, String(next)).catch((e) =>
-              console.warn("Headline turn write failed:", String(e))
-            )
-        : null,
+      advance:
+        env && env.MOOD_LOG
+          ? () =>
+              env.MOOD_LOG.put(HEADLINE_TURN_KEY, String(next)).catch((e) =>
+                console.warn("Headline turn write failed:", String(e))
+              )
+          : null,
     };
   }
 
@@ -1237,7 +1307,9 @@ async function pickHeadlineItem(env, items) {
 /* The sentence the newsreader actually says. Kept short: one source, one
    headline, no summary — a kiosk voice line, not a bulletin. */
 function buildHeadlineLine(item) {
-  let title = String(item.title || "").trim().replace(/\s+/g, " ");
+  let title = String(item.title || "")
+    .trim()
+    .replace(/\s+/g, " ");
   if (title.length > TTS_TITLE_MAX) {
     title = title.slice(0, TTS_TITLE_MAX - 1).replace(/\s+\S*$/, "") + "…";
   }
@@ -1325,18 +1397,27 @@ function pcmToWav(pcm, sampleRate, channels, bitsPerSample) {
   };
 
   ascii("RIFF");
-  dv.setUint32(o, 36 + pcm.byteLength, true); o += 4;
+  dv.setUint32(o, 36 + pcm.byteLength, true);
+  o += 4;
   ascii("WAVE");
   ascii("fmt ");
-  dv.setUint32(o, 16, true); o += 4;   // PCM chunk size
-  dv.setUint16(o, 1, true);  o += 2;   // format 1 = uncompressed PCM
-  dv.setUint16(o, channels, true); o += 2;
-  dv.setUint32(o, sampleRate, true); o += 4;
-  dv.setUint32(o, byteRate, true); o += 4;
-  dv.setUint16(o, blockAlign, true); o += 2;
-  dv.setUint16(o, bitsPerSample, true); o += 2;
+  dv.setUint32(o, 16, true);
+  o += 4; // PCM chunk size
+  dv.setUint16(o, 1, true);
+  o += 2; // format 1 = uncompressed PCM
+  dv.setUint16(o, channels, true);
+  o += 2;
+  dv.setUint32(o, sampleRate, true);
+  o += 4;
+  dv.setUint32(o, byteRate, true);
+  o += 4;
+  dv.setUint16(o, blockAlign, true);
+  o += 2;
+  dv.setUint16(o, bitsPerSample, true);
+  o += 2;
   ascii("data");
-  dv.setUint32(o, pcm.byteLength, true); o += 4;
+  dv.setUint32(o, pcm.byteLength, true);
+  o += 4;
   new Uint8Array(buf, 44).set(pcm);
   return buf;
 }
@@ -1429,7 +1510,12 @@ function computeBaseline(history) {
     .map((r) => r.score);
 
   if (scores.length < MOOD_BASELINE_MIN_SAMPLES) {
-    return { ready: false, samples: scores.length, needed: MOOD_BASELINE_MIN_SAMPLES, days: MOOD_BASELINE_DAYS };
+    return {
+      ready: false,
+      samples: scores.length,
+      needed: MOOD_BASELINE_MIN_SAMPLES,
+      days: MOOD_BASELINE_DAYS,
+    };
   }
 
   const med = median(scores);
@@ -1442,7 +1528,7 @@ function computeBaseline(history) {
     median: Math.round(med),
     spread: Math.round(spread * 10) / 10,
     min: Math.min.apply(null, scores),
-    max: Math.max.apply(null, scores)
+    max: Math.max.apply(null, scores),
   };
 }
 
@@ -1468,7 +1554,7 @@ function computeRelative(score, history, baseline) {
     z: Math.round(z * 100) / 100,
     percentile: percentile,
     vsMedian: Math.round(score - baseline.median),
-    label: relativeLabel(z)
+    label: relativeLabel(z),
   };
 }
 
@@ -1489,7 +1575,11 @@ async function handleMoodHistory(request, env) {
     return json({ available: false, reason: "no_kv_binding", readings: [] });
   }
   const url = new URL(request.url);
-  const days = clampNum(parseInt(url.searchParams.get("days") || "", 10) || MOOD_BASELINE_DAYS, 1, 60);
+  const days = clampNum(
+    parseInt(url.searchParams.get("days") || "", 10) || MOOD_BASELINE_DAYS,
+    1,
+    60
+  );
   const cutoff = Date.now() - days * 86400000;
 
   const history = await loadMoodHistory(env);
@@ -1497,13 +1587,17 @@ async function handleMoodHistory(request, env) {
     .filter((r) => r.t >= cutoff)
     .map((r) => Object.assign({ at: new Date(r.t).toISOString() }, r));
 
-  return json({
-    available: true,
-    days: days,
-    count: readings.length,
-    baseline: computeBaseline(history),
-    readings: readings
-  }, 200, { "Cache-Control": "no-store" });
+  return json(
+    {
+      available: true,
+      days: days,
+      count: readings.length,
+      baseline: computeBaseline(history),
+      readings: readings,
+    },
+    200,
+    { "Cache-Control": "no-store" }
+  );
 }
 
 function median(nums) {
@@ -1522,7 +1616,7 @@ function pctSumTo100(pos, neu, neg, n) {
   const rounded = {
     positive: Math.round((pos / n) * 100),
     neutral: Math.round((neu / n) * 100),
-    negative: Math.round((neg / n) * 100)
+    negative: Math.round((neg / n) * 100),
   };
   const diff = 100 - (rounded.positive + rounded.neutral + rounded.negative);
   if (diff !== 0) {
@@ -1539,8 +1633,9 @@ async function fetchFeed(feed) {
     signal: AbortSignal.timeout(FEED_TIMEOUT_MS),
     headers: {
       "User-Agent": "Mozilla/5.0 (compatible; EireDailyBot/1.0; +https://eire-daily)",
-      "Accept": "application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5"
-    }
+      Accept:
+        "application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5",
+    },
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const xml = await res.text();
@@ -1566,10 +1661,17 @@ function parseFeed(xml, source) {
     out.push({
       source: source,
       title: title,
-      summary: truncate(clean(rawTag(block, "description") || rawTag(block, "content:encoded") || rawTag(block, "summary")), SUMMARY_MAX),
+      summary: truncate(
+        clean(
+          rawTag(block, "description") ||
+            rawTag(block, "content:encoded") ||
+            rawTag(block, "summary")
+        ),
+        SUMMARY_MAX
+      ),
       url: getLink(block),
       published: toIso(firstOf(block, ["pubDate", "dc:date", "published", "updated"])),
-      image: getImage(block)
+      image: getImage(block),
     });
   }
   return out;
@@ -1606,7 +1708,8 @@ function getLink(block) {
 
 /* ---------- small text helpers ---------- */
 function matchAll(str, re) {
-  const out = []; let m;
+  const out = [];
+  let m;
   while ((m = re.exec(str)) !== null) out.push(m[0]);
   return out;
 }
@@ -1616,34 +1719,56 @@ function rawTag(block, name) {
   return m ? m[1] : "";
 }
 function firstOf(block, names) {
-  for (const n of names) { const v = rawTag(block, n); if (v) return v; }
+  for (const n of names) {
+    const v = rawTag(block, n);
+    if (v) return v;
+  }
   return "";
 }
-function stripCdata(s) { return (s || "").replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1"); }
-function stripTags(s)  { return (s || "").replace(/<[^>]+>/g, " "); }
+function stripCdata(s) {
+  return (s || "").replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1");
+}
+function stripTags(s) {
+  return (s || "").replace(/<[^>]+>/g, " ");
+}
 function decodeEntities(s) {
   return (s || "")
-    .replace(/&lt;/g, "<").replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&apos;/g, "'")
     .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
     .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(parseInt(d, 10)))
     .replace(/&amp;/g, "&");
 }
 // Full clean: drop CDATA + tags, decode entities, collapse whitespace.
 function clean(s) {
-  return decodeEntities(stripTags(stripCdata(s))).replace(/\s+/g, " ").trim();
+  return decodeEntities(stripTags(stripCdata(s)))
+    .replace(/\s+/g, " ")
+    .trim();
 }
 function truncate(s, n) {
   if (!s) return "";
-  return s.length > n ? s.slice(0, n - 1).replace(/\s+\S*$/, "").trim() + "…" : s;
+  return s.length > n
+    ? s
+        .slice(0, n - 1)
+        .replace(/\s+\S*$/, "")
+        .trim() + "…"
+    : s;
 }
-function upgradeHttps(u) { return (u || "").replace(/^http:\/\//i, "https://"); }
+function upgradeHttps(u) {
+  return (u || "").replace(/^http:\/\//i, "https://");
+}
 function toIso(raw) {
   if (!raw) return null;
   const d = new Date(clean(raw));
   return isNaN(d.getTime()) ? null : d.toISOString();
 }
-function dateValue(iso) { const t = iso ? Date.parse(iso) : NaN; return isNaN(t) ? 0 : t; }
+function dateValue(iso) {
+  const t = iso ? Date.parse(iso) : NaN;
+  return isNaN(t) ? 0 : t;
+}
 
 function dedupeByUrl(items) {
   const seen = new Set();
@@ -1662,7 +1787,7 @@ function corsHeaders() {
   return {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type"
+    "Access-Control-Allow-Headers": "Content-Type",
   };
 }
 function json(obj, status = 200, extra = {}) {
@@ -1672,6 +1797,6 @@ function json(obj, status = 200, extra = {}) {
       { "Content-Type": "application/json; charset=utf-8" },
       corsHeaders(),
       extra
-    )
+    ),
   });
 }
