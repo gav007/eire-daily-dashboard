@@ -73,9 +73,18 @@
      so you hear every clip in a set before any of them repeats. */
   var VOICE_SETS = {
     // Weather
-    rain: ["rain1.wav", "rain2.wav", "rain3.wav", "rain4.wav", "rain5.wav", "rain6.wav"],
-    frost: ["frost1.wav", "frost2.wav"], // snow, or genuinely cold
-    sun: ["sun1.wav", "sun2.wav", "sun3.wav", "sun4.wav", "sun5.wav"], // properly clear
+    rain: [
+      "rain1.wav",
+      "rain2.wav",
+      "rain3.wav",
+      "rain4.wav",
+      "rain5.wav",
+      "rain6.wav",
+      "rain7.wav",
+      "rain8.wav",
+    ],
+    frost: ["frost1.wav", "frost2.wav", "frost3.wav"], // snow, or genuinely cold
+    sun: ["sun1.wav", "sun2.wav", "sun3.wav", "sun4.wav", "sun5.wav", "sun6.wav"], // properly clear
     wind: [
       "wind.wav",
       "wind1.wav",
@@ -85,6 +94,8 @@
       "wind5.wav",
       "wind6.wav",
       "wind7.wav",
+      "wind8.wav",
+      "wind9.wav",
     ],
     // Overcast / fog — the most common Dublin weather there is.
     cloudy: [
@@ -96,10 +107,16 @@
       "default_dublin2.wav",
     ],
     // Partly cloudy — a bit of sun about, but not a clear day.
-    partly: ["some_sun1.wav", "normal1.wav", "normal2.wav"],
+    partly: ["some_sun1.wav", "normal1.wav", "normal2.wav", "normal3.wav", "normal4.wav"],
 
     // Mood — one set per sentiment tier, brightest first
-    goodnews: ["goodnews1.wav", "goodnews2.wav", "goodnews3.wav"],
+    goodnews: [
+      "goodnews1.wav",
+      "goodnews2.wav",
+      "goodnews3.wav",
+      "goodnews4.wav",
+      "goodnews5.wav",
+    ],
     grand: ["grand1.wav", "grand2.wav", "grand3.wav"],
     // Biggest set by design: normalising the score means most days land on
     // "about normal", so this one comes up roughly 38% of the time.
@@ -120,8 +137,18 @@
       "mixed14.wav",
       "mixed15.wav",
       "mixed16.wav",
+      "mixed17.wav",
+      "mixed18.wav",
     ],
-    heavy: ["heavy1.wav", "heavy2.wav", "heavy3.wav"],
+    heavy: [
+      "heavy1.wav",
+      "heavy2.wav",
+      "heavy3.wav",
+      "heavy4.wav",
+      "heavy5.wav",
+      "heavy6.wav",
+      "heavy7.wav",
+    ],
     grim: ["grim1.wav", "grim2.wav", "grim3.wav"],
     doom: ["doom1.wav", "doom2.wav", "doom3.wav"],
   };
