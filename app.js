@@ -116,8 +116,10 @@
       "goodnews3.wav",
       "goodnews4.wav",
       "goodnews5.wav",
+      "goodnews6.wav",
+      "goodnews7.wav",
     ],
-    grand: ["grand1.wav", "grand2.wav", "grand3.wav"],
+    grand: ["grand1.wav", "grand2.wav", "grand3.wav", "grand4.wav", "grand5.wav"],
     // Biggest set by design: normalising the score means most days land on
     // "about normal", so this one comes up roughly 38% of the time.
     mixed: [
@@ -139,6 +141,8 @@
       "mixed16.wav",
       "mixed17.wav",
       "mixed18.wav",
+      "mixed19.wav",
+      "mixed20.wav",
     ],
     heavy: [
       "heavy1.wav",
@@ -148,8 +152,18 @@
       "heavy5.wav",
       "heavy6.wav",
       "heavy7.wav",
+      "heavy8.wav",
+      "heavy9.wav",
     ],
-    grim: ["grim1.wav", "grim2.wav", "grim3.wav"],
+    grim: [
+      "grim1.wav",
+      "grim2.wav",
+      "grim3.wav",
+      "grim4.wav",
+      "grim5.wav",
+      "grim6.wav",
+      "grim7.wav",
+    ],
     doom: ["doom1.wav", "doom2.wav", "doom3.wav"],
   };
 
