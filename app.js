@@ -64,6 +64,14 @@
   var VOICE_ROT_PREFIX = "eireVoiceRot:"; // localStorage: per-set rotation index
   var VOICE_TICK_MS = 30000; // how often we check whether a clip is due
 
+  /* Grumpy — guaranteed at least once every hour, independent of the four-way
+     cycle above and independent of mood. It fires at :20 past, clear of the
+     :00/:15/:30/:45 marks, so it never competes with weather, headline, the
+     mood clip, or the digest for the same slot. Claimed per-hour in
+     localStorage the same way VOICE_SLOT_KEY claims a cycle block. */
+  var GRUMPY_SLOT_MIN = 20;
+  var GRUMPY_SLOT_KEY = "eireVoiceGrumpySlot";
+
   /* The clip library. Two families:
 
        WEATHER sets — picked from the live Open-Meteo conditions.
@@ -165,6 +173,33 @@
       "grim7.wav",
     ],
     doom: ["doom1.wav", "doom2.wav", "doom3.wav"],
+
+    // Grumpy — a separate character voice, not part of the mood-tier ladder
+    // above. Guaranteed one play every hour regardless of mood (see
+    // GRUMPY_SLOT_MIN below), so it isn't tied to VOICE_ABS_LABEL_SETS or
+    // moodVoiceSet. Batch 1 of an expanding set.
+    grumpy: [
+      "grumpy1.wav",
+      "grumpy2.wav",
+      "grumpy3.wav",
+      "grumpy4.wav",
+      "grumpy5.wav",
+      "grumpy6.wav",
+      "grumpy7.wav",
+      "grumpy8.wav",
+      "grumpy9.wav",
+      "grumpy10.wav",
+      "grumpy11.wav",
+      "grumpy12.wav",
+      "grumpy13.wav",
+      "grumpy14.wav",
+      "grumpy15.wav",
+      "grumpy16.wav",
+      "grumpy17.wav",
+      "grumpy18.wav",
+      "grumpy19.wav",
+      "grumpy20.wav",
+    ],
   };
 
   // Fallback map used only before the mood baseline has warmed up, keyed on the
@@ -1016,6 +1051,11 @@
                         from the Worker's cache the rest of the time; if it is
                         unavailable it falls back to a recorded news clip
 
+     PLUS, outside that cycle: GRUMPY — guaranteed at least once every hour,
+     at :20, regardless of mood or weather. It's a standalone character voice
+     (batch 1 of an expanding set — see VOICE_SETS.grumpy), not a mood tier,
+     so it doesn't compete with or replace the :30 news clip.
+
      Rules:
        • each block fires at most once, claimed in localStorage so a
          refresh or kiosk reload can't replay it
@@ -1081,6 +1121,20 @@
         idx,
       family: VOICE_CYCLE[idx % VOICE_CYCLE.length],
     };
+  }
+
+  // The one-per-hour id Grumpy claims — just the hour, no 15-minute block, so
+  // it can't accidentally line up with (or be starved by) voiceSlot() above.
+  function grumpySlotId(date) {
+    return (
+      date.getFullYear() +
+      "-" +
+      pad(date.getMonth() + 1) +
+      "-" +
+      pad(date.getDate()) +
+      "-" +
+      pad(date.getHours())
+    );
   }
 
   /* Take the next clip from a set and advance that set's rotation. Persisting
@@ -1221,7 +1275,11 @@
 
   // The scheduled gate: one voice per 15-minute block, daytime only, sound on.
   // Safe to call as often as we like — it no-ops unless a play is actually due.
+  // Grumpy is checked first (and claims the tick if it plays) since it has
+  // its own guaranteed once-an-hour slot, independent of the four-way cycle.
   function maybePlayVoice() {
+    if (maybePlayGrumpy()) return;
+
     if (!voiceEl || !voiceEnabled) return;
     if (!audioUnlocked) return; // ambience isn't running -> sound is "off"
 
@@ -1251,6 +1309,29 @@
     if (!file) return;
     vSet(VOICE_SLOT_KEY, slot.id);
     playVoiceFile(file);
+  }
+
+  // The Grumpy gate: one guaranteed play per hour, independent of the cycle
+  // above. Checked separately (and first) so it can never be crowded out of
+  // the hour by whichever mood clip the news slot happens to pick. Returns
+  // true if it claimed the tick and played, so the cycle above can skip.
+  function maybePlayGrumpy() {
+    if (!voiceEl || !voiceEnabled) return false;
+    if (!audioUnlocked) return false;
+
+    var d = new Date();
+    var hour = d.getHours();
+    if (hour < VOICE_START_HOUR || hour >= VOICE_END_HOUR) return false;
+    if (d.getMinutes() < GRUMPY_SLOT_MIN) return false; // not yet this hour's slot
+
+    var id = grumpySlotId(d);
+    if (vGet(GRUMPY_SLOT_KEY) === id) return false; // already played this hour
+
+    var file = nextFromSet("grumpy");
+    if (!file) return false;
+    vSet(GRUMPY_SLOT_KEY, id);
+    playVoiceFile(file);
+    return true;
   }
 
   /* ---------- Voice test helpers ----------
@@ -1315,7 +1396,8 @@
       },
       reset: function () {
         vSet(VOICE_SLOT_KEY, "");
-        return "block cleared — this block's voice will fire again";
+        vSet(GRUMPY_SLOT_KEY, "");
+        return "block cleared — this block's voice (and this hour's grumpy) will fire again";
       },
       mute: function () {
         voiceEnabled = false;
@@ -1334,6 +1416,8 @@
           block: slot.id,
           blockPlays: slot.family,
           blockDone: vGet(VOICE_SLOT_KEY) === slot.id,
+          grumpyDoneThisHour: vGet(GRUMPY_SLOT_KEY) === grumpySlotId(d),
+          grumpySlotMin: GRUMPY_SLOT_MIN,
           weatherSet: weatherVoiceSet(lastWeather),
           moodSet: moodVoiceSet(lastMood),
           audioUnlocked: audioUnlocked,
