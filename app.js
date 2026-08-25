@@ -72,6 +72,13 @@
   var GRUMPY_SLOT_MIN = 20;
   var GRUMPY_SLOT_KEY = "eireVoiceGrumpySlot";
 
+  /* Funny — two extra plays per hour in deliberately empty gaps. The five-minute
+     windows give a clip time to wait for any audio already in progress, while
+     leaving a full five-minute buffer before the next :15/:45 reservation. */
+  var FUNNY_SLOT_MINUTES = [5, 35];
+  var FUNNY_SLOT_WINDOW_MIN = 5;
+  var FUNNY_SLOT_KEY = "eireVoiceFunnySlot";
+
   /* The clip library. Two families:
 
        WEATHER sets — picked from the live Open-Meteo conditions.
@@ -199,6 +206,29 @@
       "grumpy18.wav",
       "grumpy19.wav",
       "grumpy20.wav",
+    ],
+
+    // A standalone comedy set. It gets the two free :05 and :35 slots and is
+    // never selected in place of weather, headline, mood, digest, or Grumpy.
+    funny: [
+      "funny1.wav",
+      "funny2.wav",
+      "funny3.wav",
+      "funny4.wav",
+      "funny5.wav",
+      "funny6.wav",
+      "funny7.wav",
+      "funny8.wav",
+      "funny9.wav",
+      "funny10.wav",
+      "funny11.wav",
+      "funny12.wav",
+      "funny13.wav",
+      "funny14.wav",
+      "funny15.wav",
+      "funny16.wav",
+      "funny17.wav",
+      "funny18.wav",
     ],
   };
 
@@ -1056,6 +1086,10 @@
      (batch 1 of an expanding set — see VOICE_SETS.grumpy), not a mood tier,
      so it doesn't compete with or replace the :30 news clip.
 
+     PLUS: FUNNY — twice every hour, at :05 and :35. Those are otherwise empty
+     gaps, and this set waits if another voice is still playing, so the original
+     timetable and Grumpy keep every one of their existing slots.
+
      Rules:
        • each block fires at most once, claimed in localStorage so a
          refresh or kiosk reload can't replay it
@@ -1135,6 +1169,20 @@
       "-" +
       pad(date.getHours())
     );
+  }
+
+  /* Return the current Funny slot id only during its safe five-minute window:
+     :05–:09 or :35–:39. A bounded window prevents a late catch-up from landing
+     on top of one of the existing quarter-hour voices. */
+  function funnySlotId(date) {
+    var minute = date.getMinutes();
+    for (var i = 0; i < FUNNY_SLOT_MINUTES.length; i++) {
+      var start = FUNNY_SLOT_MINUTES[i];
+      if (minute >= start && minute < start + FUNNY_SLOT_WINDOW_MIN) {
+        return grumpySlotId(date) + "-" + i;
+      }
+    }
+    return null;
   }
 
   /* Take the next clip from a set and advance that set's rotation. Persisting
@@ -1288,7 +1336,12 @@
     if (hour < VOICE_START_HOUR || hour >= VOICE_END_HOUR) return; // night / too early
 
     var slot = voiceSlot(d);
-    if (vGet(VOICE_SLOT_KEY) === slot.id) return; // this block already played
+    if (vGet(VOICE_SLOT_KEY) === slot.id) {
+      // Existing timetable has first refusal. Only after its block is safely
+      // claimed may an extra Funny slot use one of the empty gaps.
+      maybePlayFunny();
+      return;
+    }
 
     // Both remote voices claim the block BEFORE playing, so a slow fetch can't
     // let the 30-second tick fire the same slot twice.
@@ -1330,6 +1383,28 @@
     var file = nextFromSet("grumpy");
     if (!file) return false;
     vSet(GRUMPY_SLOT_KEY, id);
+    playVoiceFile(file);
+    return true;
+  }
+
+  // Two comedy plays per hour, kept in otherwise-unused windows. If another
+  // voice happens to run long, wait rather than cutting it off; the 30-second
+  // scheduler will retry until the current safe window closes.
+  function maybePlayFunny() {
+    if (!voiceEl || !voiceEnabled) return false;
+    if (!audioUnlocked) return false;
+
+    var d = new Date();
+    var hour = d.getHours();
+    if (hour < VOICE_START_HOUR || hour >= VOICE_END_HOUR) return false;
+
+    var id = funnySlotId(d);
+    if (!id || vGet(FUNNY_SLOT_KEY) === id) return false;
+    if (!voiceEl.paused && !voiceEl.ended) return false;
+
+    var file = nextFromSet("funny");
+    if (!file) return false;
+    vSet(FUNNY_SLOT_KEY, id);
     playVoiceFile(file);
     return true;
   }
@@ -1397,7 +1472,8 @@
       reset: function () {
         vSet(VOICE_SLOT_KEY, "");
         vSet(GRUMPY_SLOT_KEY, "");
-        return "block cleared — this block's voice (and this hour's grumpy) will fire again";
+        vSet(FUNNY_SLOT_KEY, "");
+        return "voice schedule cleared — the current cycle, grumpy, and funny slots can fire again";
       },
       mute: function () {
         voiceEnabled = false;
@@ -1418,6 +1494,9 @@
           blockDone: vGet(VOICE_SLOT_KEY) === slot.id,
           grumpyDoneThisHour: vGet(GRUMPY_SLOT_KEY) === grumpySlotId(d),
           grumpySlotMin: GRUMPY_SLOT_MIN,
+          funnySlotMinutes: FUNNY_SLOT_MINUTES.slice(),
+          funnySlot: funnySlotId(d),
+          funnySlotDone: !!funnySlotId(d) && vGet(FUNNY_SLOT_KEY) === funnySlotId(d),
           weatherSet: weatherVoiceSet(lastWeather),
           moodSet: moodVoiceSet(lastMood),
           audioUnlocked: audioUnlocked,
