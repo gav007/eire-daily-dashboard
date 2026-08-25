@@ -72,11 +72,11 @@
   var GRUMPY_SLOT_MIN = 20;
   var GRUMPY_SLOT_KEY = "eireVoiceGrumpySlot";
 
-  /* Funny — two extra plays per hour in deliberately empty gaps. The five-minute
-     windows give a clip time to wait for any audio already in progress, while
-     leaving a full five-minute buffer before the next :15/:45 reservation. */
-  var FUNNY_SLOT_MINUTES = [5, 35];
-  var FUNNY_SLOT_WINDOW_MIN = 5;
+  /* Funny — three extra plays per hour in deliberately empty gaps. Each slot
+     gets its own minute, leaving several clear minutes before the next existing
+     :15/:20/:30/:45/:00 reservation. */
+  var FUNNY_SLOT_MINUTES = [5, 25, 40];
+  var FUNNY_SLOT_WINDOW_MIN = 1;
   var FUNNY_SLOT_KEY = "eireVoiceFunnySlot";
 
   /* The clip library. Two families:
@@ -208,7 +208,7 @@
       "grumpy20.wav",
     ],
 
-    // A standalone comedy set. It gets the two free :05 and :35 slots and is
+    // A standalone comedy set. It gets the free :05, :25, and :40 slots and is
     // never selected in place of weather, headline, mood, digest, or Grumpy.
     funny: [
       "funny1.wav",
@@ -1086,9 +1086,9 @@
      (batch 1 of an expanding set — see VOICE_SETS.grumpy), not a mood tier,
      so it doesn't compete with or replace the :30 news clip.
 
-     PLUS: FUNNY — twice every hour, at :05 and :35. Those are otherwise empty
-     gaps, and this set waits if another voice is still playing, so the original
-     timetable and Grumpy keep every one of their existing slots.
+     PLUS: FUNNY — three times every hour, at :05, :25, and :40. Those are
+     otherwise empty gaps, and this set waits if another voice is still playing,
+     so the original timetable and Grumpy keep every one of their existing slots.
 
      Rules:
        • each block fires at most once, claimed in localStorage so a
@@ -1171,9 +1171,9 @@
     );
   }
 
-  /* Return the current Funny slot id only during its safe five-minute window:
-     :05–:09 or :35–:39. A bounded window prevents a late catch-up from landing
-     on top of one of the existing quarter-hour voices. */
+  /* Return the current Funny slot id only during its scheduled minute: :05,
+     :25, or :40. A bounded window prevents a late catch-up from landing on top
+     of one of the existing voices. */
   function funnySlotId(date) {
     var minute = date.getMinutes();
     for (var i = 0; i < FUNNY_SLOT_MINUTES.length; i++) {
@@ -1387,7 +1387,7 @@
     return true;
   }
 
-  // Two comedy plays per hour, kept in otherwise-unused windows. If another
+  // Three comedy plays per hour, kept in otherwise-unused windows. If another
   // voice happens to run long, wait rather than cutting it off; the 30-second
   // scheduler will retry until the current safe window closes.
   function maybePlayFunny() {
