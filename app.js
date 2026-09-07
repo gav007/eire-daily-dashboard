@@ -271,8 +271,10 @@
   var NEWS_ENDPOINT = "/api/news";
   var WEATHER_ENDPOINT = "/api/weather";
   var MOOD_ENDPOINT = "/api/mood"; // "The State of It" AI news-mood (Worker-side Gemini)
-  // The top story read aloud by Gemini, served as a WAV by the Worker. If it's
-  // unavailable for any reason the news slot quietly plays a recorded clip.
+  // The top story read aloud by Gemini, served as a WAV by the Worker — the
+  // headline itself, then a tone-matched reaction from Deco (see the reaction
+  // banks in worker.js). If it's unavailable for any reason the news slot
+  // quietly plays a recorded clip.
   var HEADLINE_ENDPOINT = "/api/headline-audio";
   /* "The Reckoning" — the whole day's news written as one paragraph and spoken
      in the ElevenLabs cloned voice. It has the :45 slot EVERY hour, 08:45
@@ -1092,7 +1094,9 @@
 
      A fixed four-way timetable, one of each per hour at 15-minute blocks:
        :00  WEATHER   — rain / frost / wind / sun / partly / cloudy
-       :15  HEADLINE  — the real top story read aloud by Gemini ("Deco")
+       :15  HEADLINE  — the real top story read aloud by Gemini ("Deco"),
+                        followed by his own reaction to it, matched to whether
+                        the story is grim, infuriating or actually good news
        :30  NEWS CLIP — goodnews / grand / mixed / heavy / grim / doom, from
                         how today's sentiment compares to the trailing fortnight
        :45  DIGEST    — "The Reckoning", the whole day's news in the cloned

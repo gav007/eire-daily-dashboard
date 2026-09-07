@@ -121,19 +121,32 @@ const MAD_TO_SIGMA = 1.4826;
 const TTS_MODEL = "gemini-3.1-flash-tts-preview";
 const TTS_VOICE = "Charon"; // 30 available; Charon is a clear, informative read
 
-/* How the headline is performed. Google only ever receives the headline text
-   itself, so the character has to live entirely in the delivery — it is never
-   allowed to invent or reword anything. */
+/* How the headline is performed. Google only ever receives the text we build
+   in buildHeadlineLine(), so the character has to live entirely in the delivery
+   — it is never allowed to invent or reword anything.
+
+   The line now arrives in TWO parts: news copy, then Deco's own reaction to it.
+   Telling the model about that split is what stops the reaction being read in
+   the same newsreader cadence as the headline, which is what made the old
+   one-note version sound flat. */
 const TTS_STYLE =
-  "Read the headline exactly as written. Speak as Deco, a working-class North " +
-  "Dublin man in his forties. Use a Ultra low, slightly gravelly voice with an " +
-  "unmistakable natural Dublin accent—not British, Scottish, posh, or generic " +
-  "'Irish'. Deliver it conversationally, like a dry observation made across a " +
-  "kitchen table. Sound mildly sceptical and quietly amused, as though none of " +
-  "this nonsense surprises you anymore. Keep the humour understated: no acting, " +
-  "fake laughter, shouting or exaggerated accent. Use a relaxed medium pace, " +
-  "short natural pauses and a slight downward inflection at the end. Do not " +
-  "add, remove or rewrite any words.";
+  "Speak as Deco, a working-class North Dublin man in his forties. Use a ultra " +
+  "low, slightly gravelly voice with an unmistakable natural Dublin accent" +
+  "—not British, Scottish, posh, or generic 'Irish'. No acting, fake " +
+  "laughter, shouting or exaggerated accent.\n\n" +
+  "The line has two parts and they must NOT sound the same.\n" +
+  "1) The headline sentence is news copy. Read it straight and clear, at a " +
+  "relaxed medium pace, exactly as written.\n" +
+  "2) Everything after the headline is Deco talking to himself, not to the " +
+  "listener. Leave a clear beat of silence before it starts, then drop the " +
+  "pace and the volume — slower, off-the-cuff, half muttered, like a dry " +
+  "remark made across a kitchen table to nobody in particular.\n\n" +
+  "Match the reaction to what it says. Where it is angry or exasperated, play " +
+  "it tired and fed up rather than loud, and let any swearing land flat and " +
+  "weary — never shouted, never gleeful. Where it is sombre, drop the dryness " +
+  "entirely and be quiet and sincere; there is nothing funny there. Where it " +
+  "is warm, let a bit of genuine gladness through. Do not add, remove or " +
+  "rewrite any words.";
 const TTS_URL =
   "https://generativelanguage.googleapis.com/v1beta/models/" + TTS_MODEL + ":generateContent";
 const TTS_CACHE_PREFIX = "tts:"; // shares the MOOD_LOG namespace, separate key space
@@ -146,6 +159,101 @@ const TTS_TITLE_MAX = 240; // keep the spoken line short
    RTÉ supplies the bigger share of the feed. So we take turns between sources
    instead, and read the newest story from whichever source is up. */
 const HEADLINE_TURN_KEY = "tts:srcturn";
+
+/* ---------- Deco's reaction ----------
+   The old line was "Top story from RTE." + headline + full stop, and it always
+   landed flat: one cadence, one shape, no character. So we now top and tail it
+   — a varied lead-in, the headline untouched, then a couple of sentences of
+   Deco reacting to it in his own voice.
+
+   The reaction is TONE MATCHED to the story. That matters: cheerful swearing
+   over a fatal crash would be grim, and a weary "for fuck's sake" over a cup
+   final win makes no sense either.
+
+   Why keywords and not the mood gauge: /api/mood scores the whole DAY across
+   twenty stories, but this slot reads exactly one. A win on a grim day is
+   still a win. The per-story classifications that would answer this properly
+   are dropped from the cached mood payload (they only exist under ?debug=1),
+   so reaching them would mean an extra uncached Gemini call on every read.
+   Matching on the headline's own words costs nothing, adds no latency, and
+   stays deterministic — which is what keeps the TTS cache working. */
+
+// Checked in this order; first match wins. Death and disaster outrank
+// everything, so "Free travel announced after fatal crash" stays sombre.
+const TONE_BAD =
+  /\b(dead|dies|died|dying|kill(ed|ing)?|death|fatal|murder|manslaughter|stabb|shot|shooting|crash|collision|body|bodies|victim|assault|abuse|rape|jail|court|inquest|cancer|hospice|terminal|evict|homeless|war|missile|airstrike|famine|earthquake|wildfire|drown|suicide|missing)\b/i;
+const TONE_ANNOY =
+  /\b(price|prices|cost|costs|rise|rises|rising|hike|increase|surge|delay|delays|delayed|cancel|cancelled|fare|fares|rent|rents|tax|taxes|levy|charge|bill|bills|shortage|overrun|backlog|waiting list|queue|breach|fine|fined|warn|warning|refus|reject|rejected|scandal|fraud|inquiry|resign|criticis|row over|axed|closure|shut down|job losses|redundanc|strike)\b/i;
+const TONE_GOOD =
+  /\b(win|wins|won|winner|victory|champion|final|medal|record|opens|opened|opening|launch|launched|funding|funded|invest|boost|approved|deal agreed|jobs|hiring|recruit|rescue|rescued|saved|recovery|recovers|breakthrough|award|awarded|honour|free|cut in|falls|fell|drops|dropped|reunited|celebrat)\b/i;
+
+/* Deco's lead-in. Four shapes so the slot stops opening identically every
+   time; "%s" is the source name. */
+const DECO_OPENERS = ["Right, top story from ", "Here's the big one from ", "Top story from ", "Alright. This is the main thing from "];
+const DECO_OPENERS_NOSRC = ["Right, top story. ", "Here's the big one. ", "Top story. ", "Alright. This is the main thing. "];
+
+/* What he says after it. Two sentences apiece, deliberately — one-liners were
+   over before the delivery had anywhere to go. Targets roughly 12–14 seconds
+   for the whole read.
+
+   `bad` is NOT funny and must stay that way. These are real deaths going out
+   on a kitchen wall; a punchline there would be vile. Deco drops the dryness
+   and is simply decent about it. */
+const DECO_REACTIONS = {
+  bad: [
+    "Jaysus. That's a rough one, now. God help them.",
+    "Ah, Christ. There's a family somewhere havin' the worst day of their lives over that.",
+    "Jaysus wept. You'd want to go and hug your own after hearin' that one.",
+    "That's desperate altogether. Desperate. I've not a word for it.",
+    "Ah, that's an awful thing. Spare them a thought, wherever they are.",
+  ],
+  annoyed: [
+    "For fuck's sake. Every single week with this. Every week.",
+    "Ah here. Would you stop. We're bein' robbed blind and they're after callin' it a review.",
+    "Jaysus Christ almighty. And who do you think's payin' for that? Us. It's always us.",
+    "Sure of course they did. What else would they do. Grand. Lovely. Marvellous.",
+    "Ah, you couldn't make it up. You genuinely couldn't. If you wrote that down they'd say you were exaggeratin'.",
+    "For fuck's sake, lads. There's not one of them has ever stood at a bus stop in their lives.",
+    "Would you look at the state of that. And not a single one of them'll lose a night's sleep over it.",
+  ],
+  good: [
+    "Ah, deadly. Fair play to them. That's a bit of good news for once.",
+    "Would you look at that. Somethin' actually went right. Mark the day down.",
+    "Now that's more like it. That's a lovely bit of news, that is.",
+    "Ah, that's massive. Genuinely. Good on them, every one of them.",
+    "There y'are. See, it's not all doom. Only most of it.",
+  ],
+  neutral: [
+    "Right. That's the news, whether we wanted it or not. Sure we'll find out soon enough how that one goes.",
+    "Mm. Make of that what you will. I'd say there's more to it than they're lettin' on, but that's me.",
+    "There y'are now. That's where we're at, apparently. Grand. On we go.",
+    "Grand. Sure that's the world for you. Nothin' to be done about it either way.",
+    "Right so. File that one under 'we'll see'. Wouldn't be holdin' me breath.",
+  ],
+};
+
+/* Which bank fits this story. Falls back to the day's mood ONLY when the
+   headline itself gives nothing away — a properly neutral line like "Dail to
+   sit on Thursday" is better coloured by the day than left blank. */
+function decoTone(title, dayZ) {
+  const t = String(title || "");
+  if (TONE_BAD.test(t)) return "bad";
+  if (TONE_ANNOY.test(t)) return "annoyed";
+  if (TONE_GOOD.test(t)) return "good";
+  if (typeof dayZ === "number") {
+    if (dayZ >= 0.5) return "good";
+    if (dayZ <= -1.5) return "annoyed";
+  }
+  return "neutral";
+}
+
+/* Stable pick from a list. Keyed off the headline so the same story always
+   gets the same performance — a random pick would miss the 6h TTS cache on
+   every single play and regenerate the audio each time. */
+function pickFor(list, seedText, salt) {
+  const n = parseInt(hashText(String(seedText) + "|" + salt).slice(-6), 16);
+  return list[n % list.length];
+}
 
 /* ---------- The Reckoning: a spoken digest of the whole day's news ----------
    Completely separate from the Deco headline reading above, which is unchanged.
@@ -1175,6 +1283,22 @@ function mp3Response(buf, cacheState) {
    ?text=1 returns the line as JSON instead of audio (handy for
            checking what it would say without burning a generation)
    ============================================================ */
+/* The day's relative mood score, but ONLY if /api/mood is already sitting in
+   the edge cache. Used purely as a tiebreak for headlines that read neutral on
+   their own, which is nowhere near worth a Gemini classification run — so on a
+   miss we return null and the neutral bank is used. */
+async function cachedMoodZ(request) {
+  try {
+    const key = new Request(new URL("/api/mood", request.url).toString(), { method: "GET" });
+    const hit = await caches.default.match(key);
+    if (!hit) return null;
+    const m = await hit.json();
+    return m && m.relative && typeof m.relative.z === "number" ? m.relative.z : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 async function handleHeadlineAudio(request, env, ctx) {
   const url = new URL(request.url);
   const apiKey = env && env.GEMINI_API_KEY;
@@ -1186,7 +1310,8 @@ async function handleHeadlineAudio(request, env, ctx) {
     return json({ available: false, reason: "no_news" }, 503);
   }
 
-  const line = buildHeadlineLine(picked.item);
+  const dayZ = await cachedMoodZ(request);
+  const line = buildHeadlineLine(picked.item, dayZ);
   if (preview) {
     return json({
       available: !!apiKey,
@@ -1194,6 +1319,8 @@ async function handleHeadlineAudio(request, env, ctx) {
       model: TTS_MODEL,
       source: picked.item.source,
       nextSource: picked.nextSource,
+      tone: decoTone(picked.item.title, dayZ),
+      dayZ: dayZ,
       line: line,
     });
   }
@@ -1304,9 +1431,19 @@ async function pickHeadlineItem(env, items) {
   return { item: usable[0], nextSource: sources[0], advance: null };
 }
 
-/* The sentence the newsreader actually says. Kept short: one source, one
-   headline, no summary — a kiosk voice line, not a bulletin. */
-function buildHeadlineLine(item) {
+/* What Deco actually says: a lead-in, the headline exactly as published, then
+   his own reaction to it. Still one story and no summary — a kiosk voice line,
+   not a bulletin — but roughly 12–14 seconds rather than six, because the old
+   bare headline had no room for any character in it.
+
+   The headline text itself is never touched. Everything added sits either side
+   of it, so we can give the slot personality without ever putting words in a
+   news story's mouth.
+
+   `dayZ` is the mood gauge's relative z-score, used only as a tiebreak for
+   headlines that read neutral on their own. Optional — omitted, those simply
+   get the neutral bank. */
+function buildHeadlineLine(item, dayZ) {
   let title = String(item.title || "")
     .trim()
     .replace(/\s+/g, " ");
@@ -1317,8 +1454,17 @@ function buildHeadlineLine(item) {
   // plenty of them end in "?" and "Butterflies?." reads badly aloud.
   title = title.replace(/\s+$/, "");
   if (!/[.!?…]$/.test(title)) title += ".";
+
   const source = item.source ? String(item.source).trim() : "";
-  return (source ? "Top story from " + source + ". " : "Top story. ") + title;
+  const opener = source
+    ? pickFor(DECO_OPENERS, title, "open") + source + ". "
+    : pickFor(DECO_OPENERS_NOSRC, title, "open");
+
+  const reaction = pickFor(DECO_REACTIONS[decoTone(title, dayZ)], title, "react");
+
+  // The double break is the pause between news copy and Deco muttering at it.
+  // TTS_STYLE asks for that beat explicitly too; the blank line reinforces it.
+  return opener + title + "\n\n" + reaction;
 }
 
 async function synthesizeSpeech(line, apiKey) {
