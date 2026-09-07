@@ -179,13 +179,31 @@ const HEADLINE_TURN_KEY = "tts:srcturn";
    stays deterministic — which is what keeps the TTS cache working. */
 
 // Checked in this order; first match wins. Death and disaster outrank
-// everything, so "Free travel announced after fatal crash" stays sombre.
+// everything, so "Free travel announced after fatal crash" stays sombre, and
+// anger outranks good news so "cut 4,000 jobs" can't be read as cheerful.
+//
+// Most terms are STEMS with a leading \b and no trailing one, so "assault"
+// also catches assaulted/assaulting. Terms that would over-reach as stems are
+// pinned with a trailing \b or explicit suffixes instead -- bare "war" matched
+// "warns" and bare "bill" matched "billion", which put a rain forecast and a
+// tech acquisition in the wrong banks. Test any new term both ways.
+
+// Real human harm. Deco goes quiet and sincere for these.
 const TONE_BAD =
-  /\b(dead|dies|died|dying|kill(ed|ing)?|death|fatal|murder|manslaughter|stabb|shot|shooting|crash|collision|body|bodies|victim|assault|abuse|rape|jail|court|inquest|cancer|hospice|terminal|evict|homeless|war|missile|airstrike|famine|earthquake|wildfire|drown|suicide|missing)\b/i;
+  /\b(dead\b|dies\b|died\b|dying\b|kill|death|fatal|murder|manslaughter|homicide|stabb|shot\b|shooting|gun(s|man|men)?\b|crash|collision|derail|bod(y|ies)\b|corpse|victim|assault|abduct|kidnap|attack|abuse|rape\b|jail|prison|inquest|coroner|funeral|cancer|hospice|terminal|overdose|suicide|drown|missing person|evict|homeless|war(s|fare)?\b|missile|airstrike|bomb|famine|starv|earthquake|wildfire|hurricane|tsunami|genocide|massacre|atrocit|casualt|injur|critical condition|life-threatening)/i;
+
+// Infuriating, expensive or absurd, but nobody died. This is Deco's home turf.
 const TONE_ANNOY =
-  /\b(price|prices|cost|costs|rise|rises|rising|hike|increase|surge|delay|delays|delayed|cancel|cancelled|fare|fares|rent|rents|tax|taxes|levy|charge|bill|bills|shortage|overrun|backlog|waiting list|queue|breach|fine|fined|warn|warning|refus|reject|rejected|scandal|fraud|inquiry|resign|criticis|row over|axed|closure|shut down|job losses|redundanc|strike)\b/i;
+  /\b(price|cost|expensive|rise|rising|hike|increase|surge|soar|inflation|delay|cancel|fare|rent\b|tax|levy|charge|bills?\b|shortage|overrun|backlog|waiting list|queue|breach|fines?\b|fined\b|penalt|warn|refus|reject|denied|scandal|fraud|corrupt|inquiry|tribunal|resign|criticis|slam|blast|row\b|axed|closure|shut|job losses|job cuts|cuts? \d|redundanc|lay ?off|strike|dispute|protest|far-right|extremis|racist|scam|spam|rip-off|blunder|shambles|chaos|fail|u-turn|no decision|rules out|accused|allegation|watchdog)/i;
+
+// Genuinely good. Kept deliberately TIGHT -- a false positive here is the
+// worst failure this feature has, so ambiguous words that read positive in
+// isolation ("jobs", "free", "record", "final", "falls", "cut") are excluded.
+// They appear just as often in "4,000 jobs go" and "record waiting lists".
+// Bare "win" is safe only because the far-right/protest terms above are
+// checked first, so "Far-right win" never reaches this bank.
 const TONE_GOOD =
-  /\b(win|wins|won|winner|victory|champion|final|medal|record|opens|opened|opening|launch|launched|funding|funded|invest|boost|approved|deal agreed|jobs|hiring|recruit|rescue|rescued|saved|recovery|recovers|breakthrough|award|awarded|honour|free|cut in|falls|fell|drops|dropped|reunited|celebrat)\b/i;
+  /\b(win(s|ner|ning)?\b|won\b|victory|triumph|champion|medal|gold\b|title\b|promot|qualifi|breakthrough|cure\b|recover|rescued|saved|survivor|reunited|celebrat|honour|awarded|prize|charity|raises? (thousands|millions)|donat|volunteer|new jobs|jobs boost|hiring|investment|funding boost|opens\b|opened\b|unveil|launch|approved|deal agreed|agreement reached|record high|improve|success|thrive|milestone|heartwarming|good news)/i;
 
 /* Deco's lead-in. Four shapes so the slot stops opening identically every
    time; "%s" is the source name. */
