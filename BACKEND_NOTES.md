@@ -242,6 +242,41 @@ The absolute bands in `moodLabel()` have deliberately **not** been recalibrated
 yet — that needs a fortnight of real readings to do honestly rather than by
 guesswork. Revisit once `/api/mood/history` has a full window.
 
+## Comments — "What Ireland's Saying" (`/api/comments`)
+
+Real public reactions, pulled from RTÉ News' YouTube channel: the 6 most recent
+uploads, plus their top 2 comments each (by relevance). Not AI-generated — these
+are actual viewer comments.
+
+- Needs `env.YOUTUBE_API_KEY` (free Google Cloud API key — no billing required
+  for this volume). Missing key ⇒ `{ "available": false, "reason": "no_key" }`,
+  same graceful-fallback contract as `/api/mood`.
+- A video with comments disabled returns a 403 from YouTube for that one video;
+  it's skipped, the rest still return (same "one bad source doesn't sink the
+  rest" pattern as the RSS feeds).
+- Cached 10 minutes, same as news/weather.
+- RTÉ News' channel ID (`UC8urSFTmQDxaPDEIZ2Fd63Q`) is hardcoded in
+  `src/worker.js` — a channel's ID is permanent even if its handle/name changes,
+  so this never needs updating.
+
+### `/api/comments` response shape
+```json
+{
+  "available": true,
+  "items": [
+    {
+      "videoTitle": "…",
+      "videoUrl": "https://www.youtube.com/watch?v=…",
+      "comments": [
+        { "author": "…", "body": "…", "likes": 24 }
+      ]
+    }
+  ],
+  "updatedAt": "ISO date string"
+}
+```
+When unavailable: `{ "available": false, "reason": "no_key" | "youtube_error" }`.
+
 ## CORS
 
 The current app is same-origin, so CORS is mostly harmless belt-and-braces. If the frontend is ever served from a different origin, keep `Access-Control-Allow-Origin` enabled or set `API_BASE` deliberately.

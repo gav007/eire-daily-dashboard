@@ -7,9 +7,10 @@
       assets/…) straight from the repo via the ASSETS binding
       (configured in wrangler.toml -> [assets]).
    2. Handles the API routes the frontend calls:
-        GET /api/news    -> live, normalised Irish headlines
-        GET /api/weather -> live Dublin weather from Open-Meteo
-        GET /api/health  -> { status: "ok", time: ISO }
+        GET /api/news     -> live, normalised Irish headlines
+        GET /api/weather  -> live Dublin weather from Open-Meteo
+        GET /api/comments -> real YouTube comments ("What Ireland's Saying")
+        GET /api/health   -> { status: "ok", time: ISO }
 
    Because the site and the API share ONE origin, the frontend can
    keep API_BASE = "" and just call "/api/news" — nothing to change
@@ -65,6 +66,22 @@ const WEATHER_URL =
   "&current=temperature_2m,precipitation,weather_code,wind_speed_10m" +
   "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max" +
   "&timezone=Europe%2FDublin";
+
+/* ---------- "What Ireland's Saying" — real YouTube comments ----------
+   Pulls real public reactions from RTÉ News' YouTube channel: their most
+   recent uploads, plus the top few comments under each. Needs
+   env.YOUTUBE_API_KEY (a free Google Cloud API key — see README). Missing
+   key or any failure ⇒ /api/comments returns { available:false }, same
+   graceful-fallback contract as /api/mood. */
+const YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3";
+// RTÉ News' channel ID (stable — a channel's ID never changes even if its
+// @handle or display name does). Found once via the API's search endpoint;
+// hardcoded here so every real request costs only the cheap calls below.
+const YOUTUBE_CHANNEL_ID = "UC8urSFTmQDxaPDEIZ2Fd63Q";
+const YOUTUBE_TIMEOUT_MS = 8000;
+const YOUTUBE_VIDEO_COUNT = 6; // how many recent uploads to check
+const YOUTUBE_COMMENTS_PER_VIDEO = 2; // top comments kept per video
+const YOUTUBE_COMMENT_MAX = 280; // trim long comments so cards stay tidy
 
 /* ---------- "The State of It" — AI news-mood (Gemini) ----------
    A lightweight classify-only feature. The Worker (never the browser) asks
@@ -379,6 +396,13 @@ export default {
       return handleWeather(request, ctx);
     }
 
+    if (url.pathname === "/api/comments") {
+      if (request.method !== "GET") {
+        return json({ error: "Method not allowed" }, 405);
+      }
+      return handleComments(request, env, ctx);
+    }
+
     if (url.pathname === "/api/mood") {
       if (request.method !== "GET") {
         return json({ error: "Method not allowed" }, 405);
@@ -606,6 +630,132 @@ function weatherCodeToCondition(code) {
     return "Snow";
   if (code === 95 || code === 96 || code === 99) return "Thunderstorm";
   return "Cloudy";
+}
+
+/* ============================================================
+   /api/comments — "What Ireland's Saying" (real YouTube comments)
+   ============================================================ */
+async function handleComments(request, env, ctx) {
+  const cache = caches.default;
+  const cacheKey = new Request(new URL("/api/comments", request.url).toString(), {
+    method: "GET",
+  });
+  const hit = await cache.match(cacheKey);
+  if (hit) return hit;
+
+  if (!env.YOUTUBE_API_KEY) {
+    return json({ available: false, reason: "no_key" });
+  }
+
+  try {
+    const items = await fetchYoutubeComments(env.YOUTUBE_API_KEY);
+    const response = json(
+      { available: true, items, updatedAt: new Date().toISOString() },
+      200,
+      { "Cache-Control": `public, max-age=${CACHE_SECONDS}` }
+    );
+    ctx.waitUntil(cache.put(cacheKey, response.clone()));
+    return response;
+  } catch (err) {
+    console.warn("YouTube comments failed:", String(err));
+    // Same graceful-fallback contract as /api/mood: a 200 the frontend can
+    // just hide, not a 502 that looks like the dashboard is broken.
+    return json({ available: false, reason: "youtube_error" });
+  }
+}
+
+async function fetchYoutubeComments(apiKey) {
+  const channel = await youtubeGet("channels", {
+    part: "contentDetails",
+    id: YOUTUBE_CHANNEL_ID,
+    key: apiKey,
+  });
+  const uploadsPlaylist =
+    channel &&
+    channel.items &&
+    channel.items[0] &&
+    channel.items[0].contentDetails &&
+    channel.items[0].contentDetails.relatedPlaylists &&
+    channel.items[0].contentDetails.relatedPlaylists.uploads;
+  if (!uploadsPlaylist) throw new Error("Could not find RTÉ News uploads playlist");
+
+  const playlist = await youtubeGet("playlistItems", {
+    part: "snippet",
+    playlistId: uploadsPlaylist,
+    maxResults: String(YOUTUBE_VIDEO_COUNT),
+    key: apiKey,
+  });
+  const videos = ((playlist && playlist.items) || [])
+    .map((v) => v && v.snippet)
+    .filter((s) => s && s.resourceId && s.resourceId.videoId)
+    .map((s) => ({ title: s.title, videoId: s.resourceId.videoId }));
+
+  const results = await Promise.allSettled(
+    videos.map((video) => fetchTopCommentsForVideo(video, apiKey))
+  );
+
+  const items = [];
+  results.forEach((r) => {
+    // A video with comments off/disabled (403) is skipped, not fatal — same
+    // "one bad source doesn't sink the rest" pattern as the RSS feeds.
+    if (r.status === "fulfilled" && r.value && r.value.comments.length) {
+      items.push(r.value);
+    }
+  });
+  return items;
+}
+
+async function fetchTopCommentsForVideo(video, apiKey) {
+  const data = await youtubeGet("commentThreads", {
+    part: "snippet",
+    videoId: video.videoId,
+    order: "relevance",
+    maxResults: String(YOUTUBE_COMMENTS_PER_VIDEO),
+    textFormat: "plainText",
+    key: apiKey,
+  });
+
+  const comments = ((data && data.items) || [])
+    .map((c) => {
+      const top = c && c.snippet && c.snippet.topLevelComment && c.snippet.topLevelComment.snippet;
+      if (!top || !top.textDisplay) return null;
+      return {
+        author: (top.authorDisplayName || "").replace(/^@/, ""),
+        body: trimComment(top.textDisplay),
+        likes: typeof top.likeCount === "number" ? top.likeCount : 0,
+        publishedAt: top.publishedAt || null,
+      };
+    })
+    .filter(Boolean);
+
+  return {
+    videoTitle: video.title,
+    videoUrl: "https://www.youtube.com/watch?v=" + video.videoId,
+    comments,
+  };
+}
+
+async function youtubeGet(endpoint, params) {
+  const qs = new URLSearchParams(params).toString();
+  const res = await fetch(`${YOUTUBE_API_BASE}/${endpoint}?${qs}`, {
+    redirect: "follow",
+    signal: AbortSignal.timeout(YOUTUBE_TIMEOUT_MS),
+    headers: { Accept: "application/json" },
+  });
+  if (!res.ok) {
+    // 403 on commentThreads (comments disabled for that video) is expected
+    // and handled by the caller skipping it — still throw so Promise.allSettled
+    // marks it rejected rather than silently returning nothing.
+    const body = await res.text().catch(() => "");
+    throw new Error(`YouTube HTTP ${res.status} for ${endpoint}: ${body.slice(0, 200)}`);
+  }
+  return res.json();
+}
+
+function trimComment(text) {
+  const clean = String(text).replace(/\s+/g, " ").trim();
+  if (clean.length <= YOUTUBE_COMMENT_MAX) return clean;
+  return clean.slice(0, YOUTUBE_COMMENT_MAX - 1).trim() + "…";
 }
 
 function numberAt(values, index) {

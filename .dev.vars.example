@@ -6,6 +6,12 @@
 #
 # In production DON'T use this file — set a Cloudflare secret instead:
 #   npx wrangler secret put GEMINI_API_KEY
+#   npx wrangler secret put YOUTUBE_API_KEY
 #
 # Get a key from https://aistudio.google.com/apikey
 GEMINI_API_KEY="your_key_here"
+
+# Get a key from https://console.cloud.google.com (enable "YouTube Data API v3",
+# then Credentials -> Create Credentials -> API key). Powers /api/comments
+# ("What Ireland's Saying"). Missing key -> that feature just hides.
+YOUTUBE_API_KEY="your_key_here"
