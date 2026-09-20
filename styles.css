@@ -568,11 +568,23 @@ body {
 .badge.src-journal { background-color: #5a9fdb; }
 .badge.src-dublin  { background-color: #d8a44a; }
 .badge.src-default { background-color: #9fb0a8; }
+.badge.src-comment { background-color: #38a89d; }
 
 .up-src.src-rte     { color: #4fb583; }
 .up-src.src-journal { color: #5a9fdb; }
 .up-src.src-dublin  { color: #d8a44a; }
 .up-src.src-default { color: #9fb0a8; }
+.up-src.src-comment { color: #38a89d; }
+
+/* ===================== Comment card ("What Ireland's Saying") ===================== */
+/* A real YouTube comment standing in for a headline in the hero rotation —
+   toggled by hero.hero-comment (set in app.js). Styled as a quote rather
+   than a news title so it reads as someone else's words, not a headline. */
+.hero.hero-comment .hero-title {
+  font-style: italic;
+}
+.hero.hero-comment .hero-title::before { content: "\201C"; }
+.hero.hero-comment .hero-title::after  { content: "\201D"; }
 
 /* ===================== Card swap (opacity only — cheap) ===================== */
 .hero-body, .hero-media-img, .hero-media-fallback {

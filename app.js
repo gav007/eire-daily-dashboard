@@ -286,6 +286,13 @@
   var DIGEST_ENDPOINT = "/api/digest-audio";
   var MOOD_REFRESH_MS = 30 * 60 * 1000; // re-poll mood every 30 min (Worker caches it ~3h)
 
+  /* "What Ireland's Saying" — real YouTube comments, taking a turn in the same
+     hero rotation as headlines instead of a fixed on-screen slot (the kiosk
+     canvas is already full). See /api/comments in src/worker.js. */
+  var COMMENTS_ENDPOINT = "/api/comments";
+  var COMMENTS_REFRESH_MS = 30 * 60 * 1000; // matches the Worker's 10-min cache with room to spare
+  var COMMENT_EVERY = 6; // one comment card per this many headlines in the rotation
+
   /* Stock Dublin image, used when an article has no image OR its image fails to
      load. Bundled SVG always renders (offline-safe) so the kiosk never shows a
      broken image; swap for any reachable Dublin photo URL if you prefer. */
@@ -296,6 +303,7 @@
     "RTÉ News": { cls: "src-rte", glyph: "R" },
     TheJournal: { cls: "src-journal", glyph: "J" },
     "Dublin Live": { cls: "src-dublin", glyph: "D" },
+    "What Ireland's Saying": { cls: "src-comment", glyph: "C" },
   };
   function srcMeta(name) {
     return SOURCES[name] || { cls: "src-default", glyph: (name || "?").charAt(0) };
@@ -378,7 +386,9 @@
   };
 
   /* ---------- State ---------- */
-  var items = [];
+  var items = []; // the rotation actually shown: newsItems with commentItems interleaved
+  var newsItems = []; // raw headlines from /api/news, before interleaving
+  var commentItems = []; // real comment cards from /api/comments (pseudo-items)
   var idx = 0;
   var rotateTimer = null;
   var refreshTimer = null;
@@ -513,6 +523,13 @@
     heroTime.textContent = timeAgo(item.published);
     heroTitle.textContent = item.title;
     heroSummary.textContent = item.summary || "";
+    // Quote styling (italic + curly quotes) is CSS-driven off this class, kept
+    // separate from meta.cls so it doesn't disturb the badge color mapping.
+    hero.className = item.isComment
+      ? hero.className.indexOf("hero-comment") === -1
+        ? hero.className + " hero-comment"
+        : hero.className
+      : hero.className.replace(/\s*hero-comment/, "");
     applyMedia(item);
     renderDots();
     fitHeroCopy(); // measure the summary and pick the roomiest fit for THIS story
@@ -745,16 +762,96 @@
 
   function loadAndRender(isInitial) {
     fetchNews(function (err, data, updatedAt) {
-      items = (data || []).filter(function (d) {
+      newsItems = (data || []).filter(function (d) {
         return d && d.title;
       });
-      if (!items.length) return; // mock fallback makes this near-impossible
-      if (idx >= items.length) idx = 0; // keep index in range across refreshes
+      if (!newsItems.length) return; // mock fallback makes this near-impossible
+      rebuildItems();
       setUpdated(updatedAt, err);
       if (isInitial) startRotation();
       else {
         renderSide();
       }
+    });
+  }
+
+  // Recomputes the rotation (news + any comment cards) whenever either source
+  // changes. Kept index-safe rather than force-repainting, same tolerance the
+  // weather/mood polls already have for updating around an in-progress dwell.
+  function rebuildItems() {
+    items = commentItems.length ? interleaveComments(newsItems, commentItems) : newsItems.slice();
+    if (idx >= items.length) idx = 0;
+  }
+
+  function interleaveComments(newsList, comments) {
+    var merged = [];
+    var ci = 0;
+    for (var i = 0; i < newsList.length; i++) {
+      merged.push(newsList[i]);
+      if ((i + 1) % COMMENT_EVERY === 0) {
+        merged.push(comments[ci % comments.length]);
+        ci++;
+      }
+    }
+    return merged;
+  }
+
+  /* ---------- "What Ireland's Saying" — real comments ---------- */
+  function fetchComments(cb) {
+    if (typeof fetch === "undefined") {
+      cb([]);
+      return;
+    }
+    fetch(apiUrl(COMMENTS_ENDPOINT))
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (data) {
+        cb(data && data.available && Array.isArray(data.items) ? data.items : []);
+      })
+      .catch(function () {
+        cb([]); // same quiet-hide contract as the mood gauge — never breaks the page
+      });
+  }
+
+  function youtubeThumbnail(videoUrl) {
+    var m = /[?&]v=([^&]+)/.exec(videoUrl || "");
+    return m ? "https://i.ytimg.com/vi/" + m[1] + "/hqdefault.jpg" : null;
+  }
+
+  // Flattens each video's comments into standalone hero-rotation items — one
+  // card per comment (not per video), each still linking back to its video.
+  function buildCommentItems(apiItems) {
+    var out = [];
+    (apiItems || []).forEach(function (video) {
+      var thumb = youtubeThumbnail(video.videoUrl);
+      (video.comments || []).forEach(function (c) {
+        if (!c || !c.body) return;
+        out.push({
+          isComment: true,
+          source: "What Ireland's Saying",
+          title: c.body,
+          summary:
+            "— " +
+            (c.author || "someone") +
+            " · " +
+            (c.likes || 0) +
+            " likes · on “" +
+            video.videoTitle +
+            "”",
+          url: video.videoUrl,
+          published: c.publishedAt || video.publishedAt || new Date().toISOString(),
+          image: thumb,
+        });
+      });
+    });
+    return out;
+  }
+
+  function loadComments() {
+    fetchComments(function (apiItems) {
+      commentItems = buildCommentItems(apiItems);
+      rebuildItems();
     });
   }
 
@@ -1720,6 +1817,7 @@
     loadAndRender(true);
     loadWeather();
     loadMood(false);
+    loadComments();
     refreshTimer = setInterval(function () {
       loadAndRender(false);
       loadWeather();
@@ -1727,6 +1825,7 @@
     setInterval(function () {
       loadMood(false);
     }, MOOD_REFRESH_MS);
+    setInterval(loadComments, COMMENTS_REFRESH_MS);
 
     // Google Fonts can arrive AFTER first paint, which changes text metrics and
     // could leave the first card mis-fitted. Re-fit once they're ready. Guarded

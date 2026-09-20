@@ -723,6 +723,7 @@ async function fetchTopCommentsForVideo(video, apiKey) {
         author: (top.authorDisplayName || "").replace(/^@/, ""),
         body: trimComment(top.textDisplay),
         likes: typeof top.likeCount === "number" ? top.likeCount : 0,
+        publishedAt: top.publishedAt || null,
       };
     })
     .filter(Boolean);
